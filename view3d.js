@@ -163,7 +163,7 @@ export function create(g) {
   function rebuild() {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
-    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], gate: null };
+    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], gate: null, solid: [] };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     const add = (geo, mat) => { let l = lists.get(mat); if (!l) lists.set(mat, l = []); l.push(geo); };
 
@@ -218,6 +218,7 @@ export function create(g) {
     for (const [mat, l] of lists) {
       const m = mesh(mergeGeometries(l.map(q => q.index ? q.toNonIndexed() : q)), mat);
       world.add(m); l.forEach(q => q.dispose());
+      if (mat !== BOOST && mat !== BELT && mat !== CHECKER) D.solid.push(m);   // (what the camera keeps out of)
     }
 
     // ---- what stands on the track ----
@@ -524,7 +525,10 @@ export function create(g) {
   // ---------------- the camera ----------------
   const camEl = document.createElement('div'); camEl.id = 'cam'; document.body.appendChild(camEl);
   const cam = { mode: CFG.camera === 'overview' ? 'overview' : 'auto', key: null, dist: 90, userT: -1e9, zoomT: -1e9, leader: null };
-  controls.addEventListener('start', () => { cam.userT = performance.now(); });
+  // Moving the camera yourself (orbiting, zooming or panning) puts it in manual: it stays where you leave
+  // it until you pick something else (a racer to follow, auto, the whole course). Following a racer, it just
+  // changes the angle and how close it follows.
+  controls.addEventListener('start', () => { cam.userT = performance.now(); if (cam.mode !== 'follow' && cam.mode !== 'free') setMode('free'); });
   renderer.domElement.addEventListener('wheel', () => { cam.zoomT = cam.userT = performance.now(); }, { passive: true });
   const fitR = r => r / Math.sin(camera.fov * Math.PI / 360) * (camera.aspect < 1 ? 1 / camera.aspect : 1);
   const center = () => new THREE.Vector3((K.lo[0] + K.hi[0]) / 2, (K.lo[1] + K.hi[1]) / 2, (K.lo[2] + K.hi[2]) / 2);
@@ -544,6 +548,7 @@ export function create(g) {
     const w = ws.find(r => r.name.toLowerCase() === a) || ws.find(r => r.name.toLowerCase().startsWith(a)) || ws.find(r => r.name.toLowerCase().includes(a));
     if (w) setMode('follow', w);
   }
+  const ray = new THREE.Raycaster(); let rayN = 0, clearAt = Infinity;
   const off = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3(), chase = new THREE.Vector3();
   function leader() {
     let best = null;
@@ -589,12 +594,20 @@ export function create(g) {
     const k = 1 - Math.exp(-dt * 3);
     if (target) { tmp.copy(target).sub(controls.target).multiplyScalar(k); controls.target.add(tmp); camera.position.add(tmp); }
     off.copy(camera.position).sub(controls.target);
-    const userQuiet = now - cam.userT > 6000;
-    if (behind && userQuiet) off.lerp(behind, k * 0.6);   // (chasing: swing round behind it)
-    else if (dist && (cam.mode === 'follow' || now - cam.zoomT > 6000)) off.setLength(off.length() + (dist - off.length()) * k);
-    if (auto && !behind && userQuiet) { const a = t * 0.05; off.lerp(tmp.set(Math.cos(a), 0.45, Math.sin(a)).normalize().multiplyScalar(dist || off.length()), k * 0.15); }   // (circling slowly)
+    if (behind) off.lerp(behind, k * 0.6);   // (chasing: swing round behind it)
+    else if (dist) off.setLength(off.length() + (dist - off.length()) * k);
+    if (auto && !behind) { const a = t * 0.05; off.lerp(tmp.set(Math.cos(a), 0.45, Math.sin(a)).normalize().multiplyScalar(dist || off.length()), k * 0.15); }   // (circling slowly)
+    // following or chasing, it never ends up inside the track: if any's in the way between the ball and
+    // the camera, it comes in closer, in front of it (looked for every few frames)
+    if (cam.mode !== 'free' && cam.mode !== 'overview' && target && (++rayN % 3 === 0)) {
+      ray.set(controls.target, tmp.copy(off).normalize()); ray.far = off.length();
+      const hit = ray.intersectObjects(D.solid, false)[0];
+      clearAt = hit && hit.distance > 6 ? hit.distance - 4 : hit ? 6 : Infinity;
+    }
+    if (cam.mode !== 'free' && cam.mode !== 'overview' && off.length() > clearAt) off.setLength(clearAt);
     camera.position.copy(controls.target).add(off);
     camera.lookAt(controls.target);
+    if (cam.mode === 'free') label = 'MANUAL · double-click for auto';
     if (camEl.dataset.l !== label) { camEl.dataset.l = label; camEl.innerHTML = '🎥 ' + label; }
     camEl.classList.toggle('show', cam.mode === 'follow');
   }

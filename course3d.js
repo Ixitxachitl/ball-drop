@@ -163,12 +163,14 @@ export function createCourse(g) {
       lip.gapTo = out.length;   // (the next piece)
       dress(add(straight(150, -0.07, { kind: 'land' })));
     } else if (kind === 'funnel') {
-      // the track runs level into the rim of a glass funnel; out of its spout the balls drop onto the next piece
+      // The track runs level up to the rim of a glass funnel wider than itself, standing just ahead of its
+      // end and a little lower, so the balls roll off the end over the rim and drop in. Each goes round the
+      // way it came in (to the left of the middle one way, to the right the other), spirals down, and drops
+      // out of the spout onto the next piece below.
       const lead = add(straight(50, -0.02));
-      const R = rnd(16, 22), Hf = rnd(28, 40), side = pick([-1, 1]), yaw = tur.yaw;
-      const cx = tur.x - Math.sin(yaw) * side * R, cz = tur.z + Math.cos(yaw) * side * R, cy = tur.y;
-      const tx = Math.cos(yaw), tz = Math.sin(yaw), dir = Math.sign((tur.x - cx) * tz - (tur.z - cz) * tx) || 1;
-      lead.end = 'funnel'; lead.fun = { cx, cy, cz, R, H: Hf, dir };
+      const R = HW + rnd(6, 10), Hf = rnd(34, 46), yaw = tur.yaw;
+      const cx = tur.x + Math.cos(yaw) * (R - 1), cz = tur.z + Math.sin(yaw) * (R - 1), cy = tur.y - 2;
+      lead.end = 'funnel'; lead.fun = { cx, cy, cz, R, H: Hf };
       tur = { x: cx, y: cy - Hf - 34, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: -0.1 };
       lead.gapTo = out.length;
       dress(add(straight(130, -0.07, { kind: 'land' })));
@@ -412,14 +414,20 @@ export function createCourse(g) {
   }
   // round and round a funnel, tighter and faster, then out of the spout
   function toFunnel(w, F) {
-    w.m3 = 'funnel'; w.F = F; w.fk = 0; w.fth = Math.atan2(w.Z - F.cz, w.X - F.cx); w.fr0 = clamp(Math.hypot(w.X - F.cx, w.Z - F.cz), 3, F.R); w.fv = Math.max(60, w.vs);
+    w.m3 = 'funnel'; w.F = F; w.fk = 0; w.fth = Math.atan2(w.Z - F.cz, w.X - F.cx); w.fr0 = clamp(Math.hypot(w.X - F.cx, w.Z - F.cz), 3, F.R - RW); w.fv = Math.max(60, w.vs);
+    w.fy0 = w.Y;
+    // round the way it was heading across: which side of the middle it came in on
+    const f = w.fr, rx = w.X - F.cx, rz = w.Z - F.cz, vx = f.T[0] * w.vs + f.B[0] * w.vu, vz = f.T[2] * w.vs + f.B[2] * w.vu;
+    w.fdir = Math.sign(rx * vz - rz * vx) || (w.u >= 0 ? 1 : -1);
     w.land = pieces[w.pi].landOn;
   }
   const FUNNEL_TIME = 2.2;
   function stepFunnel(w, dt) {
     const F = w.F, k = Math.min(1, (w.fk += dt / FUNNEL_TIME)), r = w.fr0 * (1 - k) + 1.6 * k, v = Math.min(200, w.fv + 70 * k);
-    w.fth += F.dir * v / Math.max(r, 3) * dt;
-    w.X = F.cx + Math.cos(w.fth) * r; w.Z = F.cz + Math.sin(w.fth) * r; w.Y = F.cy - F.H * k + RW * (1 - k) * 0.5;
+    w.fth += w.fdir * v / Math.max(r, 3) * dt;
+    // riding the inside of the bowl at that radius (dropping onto it from the end of the track at first)
+    const surf = F.cy - F.H * clamp((F.R - r) / (F.R - 1.6), 0, 1) + RW;
+    w.X = F.cx + Math.cos(w.fth) * r; w.Z = F.cz + Math.sin(w.fth) * r; w.Y = surf + (w.fy0 - surf) * Math.max(0, 1 - k * 6);
     if (k >= 1) { w.m3 = 'air'; w.vx = rnd(-8, 8); w.vy = -50; w.vz = rnd(-8, 8); w.Y = F.cy - F.H - 2; }
     flat(w);
   }
