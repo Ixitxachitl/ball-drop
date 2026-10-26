@@ -49,18 +49,42 @@
     scenery   0 = no Vegas skyline and searchlights
     bg        testing: none = transparent in a normal browser too, or a color (default: dark outside OBS)
 
+  3D view (course3d.js and view3d.js, drawn with three.js): its own race, down one long, wide, winding
+  track through space (banked turns, helixes, loops, jumps, glass funnels, a pachinko slope, a pinball
+  table, lane splits), the racers as balls, under a night sky (so the source isn't see-through), with a
+  camera you can move. Joining, starting, the signs and the bubbles are the same as in 2D.
+    view      3d = the 3D view instead of pixel art
+    camera    overview = start on the whole course instead of auto (which follows the leader)
+    camcmd    mods' camera command (default !cam): "!cam name" follows a racer, "!cam all" the whole
+              course, "!cam" back to auto
+    shadows   0 = no shadows, if it's slow
+  In OBS's Interact window: drag to orbit, wheel to zoom, right-drag to pan, click a racer to follow them,
+  double-click empty space for auto; keys A = auto, O = whole machine, F = leave the camera be, ← / → =
+  follow the next racer.
+
   Custom integrations (Streamer.bot, etc.) can call window.drop.join(name, { color }), .leave(name), .start(),
-  .say(name, text) and .newTrack().
+  .say(name, text), .newTrack() and .cam(arg) (like "!cam arg").
 -->
 <html>
 <head>
 <meta charset="utf-8">
 <title>Ball Drop</title>
 <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+<!-- three.js, for the 3D view (only loaded when it's on) -->
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
 <style>
   html,body{margin:0;padding:0;background:transparent;overflow:hidden;width:100%;height:100%}
   #c{position:fixed;left:0;top:0;image-rendering:pixelated;image-rendering:crisp-edges}
   #ui{position:fixed;left:0;top:0;pointer-events:none}
+  /* the 3D view: its own canvas instead of the pixel one, and a tag saying what the camera's doing */
+  body.v3d #c{display:none}
+  #gl{position:fixed;left:0;top:0;display:block;outline:none}
+  #cam{position:fixed;left:16px;bottom:16px;z-index:15;padding:8px 11px 7px;font:11px/1 var(--pix);color:var(--ink);background:#fffaf0;
+    box-shadow:var(--vx);--p:3px;opacity:0;transition:opacity .3s;pointer-events:none;max-width:60vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #cam.show,body.mouse #cam{opacity:1}
+  #cam b{color:var(--c,#c4500f)}
   /* Pixel style shared by the bubbles, the signs and the settings window: square corners, and --vx draws a
      notched ink outline (four offset shadows leave the corners out). --p is one machine pixel on screen. */
   :root{--ink:#1f1830;--p:4px;
@@ -122,6 +146,7 @@
   #hud{position:fixed;right:16px;top:14px;z-index:15;padding:9px 12px 8px;font:13px/1 var(--pix);color:var(--ink);background:#fffaf0;
     box-shadow:var(--vx);opacity:0;transition:opacity .3s;pointer-events:none;--p:3px}
   #hud.show{opacity:1}
+  #hud .flag{width:15px;height:15px;margin:-3px 0 -3px 7px;vertical-align:top}
   #toast{position:fixed;left:50%;bottom:24px;translate:-50% 0;z-index:30;padding:10px 14px 9px;font:13px/1.3 var(--pix);background:#fffaf0;color:var(--ink);
     box-shadow:var(--vx),6px 6px 0 0 rgba(20,10,40,.4);opacity:0;transition:opacity .3s;pointer-events:none;max-width:80vw;text-align:center;--p:3px}
   #toast.show{opacity:1}
@@ -246,6 +271,11 @@
     { k: 'speed', label: 'Speed ×', type: 'num', def: 1, min: 0.25, max: 3, step: 0.05 },
     { k: 'decor', label: 'Floating decorations', type: 'bool', def: true, help: 'Dice, chips, coins and stars drifting behind the machine.' },
     { k: 'scenery', label: 'Vegas skyline', type: 'bool', def: true, help: 'Hotels and searchlights behind the machine.' },
+    { sec: '3D view' },
+    { k: 'view', label: 'View', type: 'select', def: '2d', opts: [['2d', '2D pixel art'], ['3d', '3D']], help: "3D is its own race: one long winding track, balls, a night sky (so it isn't see-through) and a camera that can orbit, zoom and follow racers." },
+    { k: 'camera', label: 'Camera starts on', type: 'select', def: 'auto', opts: [['auto', 'Auto (follows the leader)'], ['overview', 'The whole course']] },
+    { k: 'camcmd', label: 'Camera command', type: 'text', def: '!cam', help: 'For mods: "!cam name" follows a racer, "!cam all" shows the whole course, "!cam" goes back to auto.' },
+    { k: 'shadows', label: 'Shadows', type: 'bool', def: true, help: 'Turn off if the 3D view is slow on your PC.' },
   ];
   const FIELD = Object.fromEntries(FIELDS.filter(f => f.k).map(f => [f.k, f]));
   function coerce(f, v) {
@@ -264,7 +294,7 @@
     channel: SET.channel.replace(/^#/, '').toLowerCase(),
     kick: SET.kick.replace(/^.*kick\.com\//i, '').replace(/[/?#].*$/, '').toLowerCase(),
     tiktok: SET.tiktok === '1' ? 'ws://localhost:21213/' : SET.tiktok,
-    joincmd: cmdOf(SET.joincmd, '!join'), startcmd: cmdOf(SET.startcmd, '!start'),
+    joincmd: cmdOf(SET.joincmd, '!join'), startcmd: cmdOf(SET.startcmd, '!start'), camcmd: cmdOf(SET.camcmd, '!cam'),
   };
   const SELFTEST = parseInt(Q.get('selftest') || '0', 10);
 
@@ -276,6 +306,10 @@
   else if (!bgq && !window.obsstudio) document.body.style.background = '#1d1b2a';
 
   const G = 320, RW = 4;           // gravity, wheel radius (art px)
+  // In the 3D view the floors are channels ZT either side of the middle, and the balls move across them too
+  // (z): pins, bumpers, hard landings and each other knock them about, and they roll past each other at
+  // different depths. The 2D view keeps everything in one plane.
+  const DEPTH = CFG.view === '3d', ZT = 12, ZB = ZT - RW - 1.5;
   const MINV = 40, VMAX = 230;     // the speed wheels roll at on their own, and the fastest they go
   const STEP = 1 / 240;
   const C = {
@@ -331,10 +365,11 @@
   let SIM = false;    // (the self-test runs races with no effects)
   const parts = [], rings = [], pops = [];
   let simT = 0;       // seconds of game time
-  function popup(x, y, text, c) { if (!SIM) pops.push({ x, y, text, c, l: 1.2 }); }
-  function emit(x, y, n, cols, spdX, up, grav = 200, life = [0.3, 0.8]) {
+  // (z: how far in front or behind, in the 3D view; left out, it's anywhere across the track)
+  function popup(x, y, text, c, z) { if (!SIM) pops.push({ x, y, z, text, c, l: 1.2 }); }
+  function emit(x, y, n, cols, spdX, up, grav = 200, life = [0.3, 0.8], z) {
     if (SIM) return;
-    for (let i = 0; i < n; i++) parts.push({ x, y, vx: rnd(-spdX, spdX), vy: -rnd(0, up), l: rnd(life[0], life[1]), c: pick(cols), g: grav });
+    for (let i = 0; i < n; i++) parts.push({ x, y, z, vx: rnd(-spdX, spdX), vy: -rnd(0, up), l: rnd(life[0], life[1]), c: pick(cols), g: grav });
   }
 
   // ---------------- the machine ----------------
@@ -392,6 +427,7 @@
   const covers = (spans, holes) => holes.every(([a, c]) => spans.some(s => s.xa <= a + 1 && s.xb >= c - 1));
 
   function build() {
+    if (C3) { K = C3.build(); return; }   // (the 3D view's course: see course3d.js)
     const pw = Math.max(90, Math.round(W * CFG.width / 100) - 10);
     const xl = Math.round((W - pw) / 2), xr = xl + pw;
     K = { xl, xr, segs: [], circles: [], spans: [], bands: [], flippers: [], traps: [], bumpers: [], pegs: [], hops: [], slots: [],
@@ -667,20 +703,20 @@
     for (const g of K.cogs) Object.assign(g, { teeth: Math.max(5, Math.round(g.r * 0.8)), lit: shade(g.col, 0.25), dk: shade(g.col, -0.3) });
   }
   function drawCogs(t) {
-    const T = 2 * Math.PI;
     ctx.globalAlpha = 0.75;
-    for (const g of K.cogs) {
-      const rot = g.ph + t * g.sp, R = g.r, cx = Math.round(g.x), cy = Math.round(g.y);
-      for (let dy = -R - 2; dy <= R + 2; dy++) for (let dx = -R - 2; dx <= R + 2; dx++) {
-        const d = Math.hypot(dx, dy);
-        if (d > R + 1.6) continue;
-        const a = Math.atan2(dy, dx) - rot, f = ((a / T * g.teeth) % 1 + 1) % 1;
-        if (d > R - 0.4 && Math.min(f, 1 - f) > 0.25) continue;                     // between the teeth
-        if (R >= 8 && d > 2.8 && d < R - 2.6) { const s = ((a / T * 4) % 1 + 1) % 1; if (Math.min(s, 1 - s) > 0.1) continue; }   // four spokes
-        px(cx + dx, cy + dy, d < 1.5 ? '#8a8aa0' : d > R - 1.6 ? (dy < 0 ? g.lit : g.dk) : g.col);
-      }
-    }
+    for (const g of K.cogs) drawCog(g, Math.round(g.x), Math.round(g.y), g.ph + t * g.sp);
     ctx.globalAlpha = 1;
+  }
+  function drawCog(g, cx, cy, rot) {
+    const T = 2 * Math.PI, R = g.r;
+    for (let dy = -R - 2; dy <= R + 2; dy++) for (let dx = -R - 2; dx <= R + 2; dx++) {
+      const d = Math.hypot(dx, dy);
+      if (d > R + 1.6) continue;
+      const a = Math.atan2(dy, dx) - rot, f = ((a / T * g.teeth) % 1 + 1) % 1;
+      if (d > R - 0.4 && Math.min(f, 1 - f) > 0.25) continue;                     // between the teeth
+      if (R >= 8 && d > 2.8 && d < R - 2.6) { const s = ((a / T * 4) % 1 + 1) % 1; if (Math.min(s, 1 - s) > 0.1) continue; }   // four spokes
+      px(cx + dx, cy + dy, d < 1.5 ? '#8a8aa0' : d > R - 1.6 ? (dy < 0 ? g.lit : g.dk) : g.col);
+    }
   }
 
   // Turns a span (and the springs, boost pads, belts and trapdoors marked along it) into solid segments.
@@ -738,7 +774,13 @@
     const sp = Math.hypot(w.vx, w.vy);
     if (sp > VMAX) { w.vx *= VMAX / sp; w.vy *= VMAX / sp; }
     w.x += w.vx * dt; w.y += w.vy * dt; w.rot += w.vx * dt / RW;
+    if (DEPTH) {   // across the channel, slowing as it rolls, and bouncing off its sides
+      w.z += w.vz * dt;
+      if (c) w.vz *= 1 - 1.5 * dt;
+      if (Math.abs(w.z) > ZB) { w.z = Math.sign(w.z) * ZB; w.vz *= -0.5; }
+    }
   }
+  const nudgeZ = (w, k) => { if (DEPTH) w.vz += rnd(-k, k); };
 
   // Wheels bump into each other (gently: a pile never shoves one through the floor).
   function pairs(ws) {
@@ -746,13 +788,17 @@
       const a = ws[i]; if (a.mode !== 'free') continue;
       for (let j = i + 1; j < ws.length; j++) {
         const b = ws[j]; if (b.mode !== 'free') continue;
-        const dx = b.x - a.x, dy = b.y - a.y;
+        const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;   // (dz is 0 in 2D)
         if (dx > 8 || dx < -8 || dy > 8 || dy < -8) continue;
-        const d2 = dx * dx + dy * dy; if (d2 >= 64 || d2 < 1e-6) continue;
-        const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, push = Math.min(1.2, (8 - d) / 2);
+        const d2 = dx * dx + dy * dy + dz * dz; if (d2 >= 64 || d2 < 1e-6) continue;
+        const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, nz = dz / d, push = Math.min(1.2, (8 - d) / 2);
         a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
-        const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-        if (vn < 0) { const im = -1.35 * vn / 2; a.vx -= im * nx; a.vy -= im * ny; b.vx += im * nx; b.vy += im * ny; }
+        if (DEPTH) { a.z -= nz * push; b.z += nz * push; }
+        const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny + (b.vz - a.vz) * nz;
+        if (vn < 0) {
+          const im = -1.35 * vn / 2; a.vx -= im * nx; a.vy -= im * ny; b.vx += im * nx; b.vy += im * ny;
+          if (DEPTH) { a.vz -= im * nz; b.vz += im * nz; }
+        }
       }
     }
   }
@@ -790,6 +836,7 @@
     let rx = w.vx - svx, ry = w.vy - svy;
     const vn = rx * nx + ry * ny;
     if (vn < 0) { rx -= (1 + s.e) * vn * nx; ry -= (1 + s.e) * vn * ny; w.vx = rx + svx; w.vy = ry + svy; }
+    if (vn < -50) nudgeZ(w, Math.min(35, -vn * 0.2));   // a hard landing or knock throws it sideways a bit
     if (ny > -0.4) return;
     // standing on it: which way is downhill (or the way this piece runs, where it's level)
     let tx = -ny, ty = nx;
@@ -798,7 +845,7 @@
     w.contact = { tx, ty, s };
     // (a spring throws each wheel once: one knocked back by the bumpers just rolls over it the next time)
     if (s.spring && !w.seen.has(s)) {
-      w.seen.add(s); w.vy = -s.spring * rnd(0.8, 1); w.vx = s.flow * rnd(20, 70); w.contact = null;
+      w.seen.add(s); w.vy = -s.spring * rnd(0.8, 1); w.vx = s.flow * rnd(20, 70); w.contact = null; nudgeZ(w, 30);
       s.anim = 1;
       emit(w.x, w.y + RW, 12, ['#ffef5a', '#fff', C.pad], 45, 70, 150, [0.4, 0.9]);
     } else if (s.boost) {
@@ -812,7 +859,7 @@
     const d = Math.sqrt(d2), nx = dx / d, ny = dy / d;
     w.x = c.x + nx * R; w.y = c.y + ny * R;
     const vn = w.vx * nx + w.vy * ny;
-    if (vn < 0) { w.vx -= (1 + c.e) * vn * nx; w.vy -= (1 + c.e) * vn * ny; }
+    if (vn < 0) { w.vx -= (1 + c.e) * vn * nx; w.vy -= (1 + c.e) * vn * ny; nudgeZ(w, c.kick ? 45 : 25); }
     if (c.kick) {
       if (simT - (c.hitT || -9) > 0.05) {
         w.vx += nx * c.kick; w.vy += ny * c.kick - 25; c.hitT = simT;
@@ -836,7 +883,10 @@
   function enterPipe(w, P) { w.mode = 'path'; w.P = P; w.s = 0; w.v = Math.max(50, Math.hypot(w.vx, w.vy)); }
   const FUNNEL_TIME = 1.8;
   function enterFunnel(w, F) {
-    w.mode = 'funnel'; w.F = F; w.k = 0; w.th = w.x < F.x ? Math.PI : 0; w.r0 = clamp(Math.abs(w.x - F.x), 2, F.R); w.fv = Math.max(60, Math.hypot(w.vx, w.vy));
+    w.mode = 'funnel'; w.F = F; w.k = 0; w.fv = Math.max(60, Math.hypot(w.vx, w.vy));
+    // (in 3D it goes round from wherever across the rim it came in)
+    w.th = DEPTH ? Math.atan2(w.z, w.x - F.x) : w.x < F.x ? Math.PI : 0;
+    w.r0 = clamp(DEPTH ? Math.hypot(w.x - F.x, w.z) : Math.abs(w.x - F.x), 2, F.R);
   }
   // (coming out doesn't count as getting anywhere for watch(), so one caught going round and round in and
   // out of something still gets lifted out of it)
@@ -860,6 +910,7 @@
       const i = at(w.s), a = P[i - 1], b = P[i], sg = Math.max(0.001, b.s - a.s);
       w.v = clamp(w.v + G * 0.7 * (b.y - a.y) / sg * dt - w.v * 0.15 * dt, 45, 190);
       w.s += w.v * dt; w.rot += w.v * dt / RW * (b.x >= a.x ? 1 : -1);
+      w.z *= 1 - Math.min(1, 6 * dt); w.vz = 0;   // (into the middle of the pipe)
       const end = P[P.length - 1];
       if (w.s >= end.s) {
         const q = P[P.length - 2], d = Math.hypot(end.x - q.x, end.y - q.y) || 1;
@@ -872,7 +923,9 @@
       const F = w.F, k = Math.min(1, (w.k += dt / FUNNEL_TIME)), r = w.r0 * (1 - k) + 1.5 * k;
       const v = Math.min(200, w.fv + 70 * k);
       w.th += v / Math.max(r, 4) * dt; w.rot += v * dt / RW;
-      w.x = F.x + Math.cos(w.th) * r; w.y = F.rimY + (F.spoutY - F.rimY) * k - RW + Math.sin(w.th) * r * 0.3;
+      // (2D squashes the circle flat, as if seen from a little above; 3D goes round it for real)
+      w.x = F.x + Math.cos(w.th) * r; w.y = F.rimY + (F.spoutY - F.rimY) * k - RW + (DEPTH ? 0 : Math.sin(w.th) * r * 0.3);
+      if (DEPTH) { w.z = Math.sin(w.th) * r; w.vz = Math.cos(w.th) * v * 0.3; }
       if (k >= 1) { w.x = F.x + rnd(-1, 1); w.y = F.spoutY; backToFree(w, rnd(-15, 15), 70); }
     }
   }
@@ -881,7 +934,7 @@
   // front of it) hops over it, clear of its corners.
   function hop(w, h) {
     w.vy = -Math.sqrt(2 * G * (h.hh + RW + rnd(4, 10))); w.vx = h.f * clamp(Math.abs(w.vx), 40, 75); w.contact = null;
-    w.hopH = h; w.hopT = simT;
+    w.hopH = h; w.hopT = simT; nudgeZ(w, 20);
     if (SIM) return;
     if (h.kind === 'mush' || h.kind === 'kick') { h.lit = 1; popup(h.x, h.top - 6, '+' + pick([100, 200, 500]), h.kind === 'mush' ? '#ffe600' : '#3ff8ff'); }
     emit(h.x - h.f * h.hw / 2, h.fy - 2, 6, ['#ffe600', '#fff'], 30, 40, 150);
@@ -906,7 +959,11 @@
       }
       for (const F of b.funnels) if (Math.abs(w.x - F.x) < F.R && w.y > F.rimY - RW - 3 && w.y < F.rimY + 6 && w.vy > -5) { enterFunnel(w, F); return; }
       if (!SIM) {
-        for (const D of b.doms) if (D.start < 0 && crossed(w, D.ds[0] - D.f * RW, D.f) && Math.abs(w.y + RW - D.ys[0]) < 4) D.start = simT;
+        // (in 3D the dominoes stand along the back of the channel, so only a wheel along there reaches them)
+        for (const D of b.doms) if (D.start < 0 && (!DEPTH || w.z < -ZT + 4 + 2.5 + RW)) {
+          const i = D.ds.findIndex((x, j) => Math.abs(w.x - x) < RW && Math.abs(w.y + RW - D.ys[j]) < 5);
+          if (i >= 0) knockDominoes(D, i, w);
+        }
         for (const cs of b.cones) for (const c of cs.cs) if (!c.hit && crossed(w, c.x - cs.f * RW, cs.f) && Math.abs(w.y + RW - c.y) < 5) hitCone(c, w, cs.f);
         for (const S of b.slots) if (Math.abs(w.x - S.x) < 3 && w.y < S.base && w.y > S.base - 34) spinSlots(S);
       }
@@ -966,14 +1023,15 @@
   let live = [];
 
   function makeWheel(key, name, color) {
-    return { key, name, color, pal: riderPal(name, color), x: 0, y: 0, vx: 0, vy: 0, px: 0, py: 0, rot: 0, mode: 'free',
+    return { key, name, color, pal: riderPal(name, color), x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, px: 0, py: 0, rot: 0, mode: 'free',
       contact: null, trail: [], idle: 0, bestY: -99, prog: 0, kicks: 0, warps: 0, seen: new Set(), bub: null, dots: null, sayUntil: 0, boostT: 0, rank: 0 };
   }
   // new racers drop onto the starting shelf from above the top of the screen, wherever there's room
   function dropIn(w) {
+    if (C3) return C3.spawn(w);
     let x = rnd(K.xl + RW + 2, K.xr - RW - 2);
     for (let t = 0; t < 12; t++) { if (![...racers.values()].some(o => Math.abs(o.x - x) < 10)) break; x = rnd(K.xl + RW + 2, K.xr - RW - 2); }
-    Object.assign(w, { x, y: -rnd(6, 30), vx: rnd(-20, 20), vy: 0, mode: 'free', px: x });
+    Object.assign(w, { x, y: -rnd(6, 30), z: DEPTH ? rnd(-ZB, ZB) : 0, vx: rnd(-20, 20), vy: 0, vz: 0, mode: 'free', px: x });
     w.py = w.y;
   }
   function refreshLive() { live = [...racers.values()].filter(w => w.mode !== 'done'); }
@@ -1009,6 +1067,7 @@
   function go() {
     state = 'race'; raceT0 = simT; raceStart = performance.now();
     K.doorsOpen = true; K.openT = simT; for (const s of K.slats) s.on = false;
+    if (C3) C3.open();
     for (const w of racers.values()) { w.prog = simT; w.bestY = w.y; w.idle = 0; }
     emit((K.xl + K.xr) / 2, K.startY, 30, ['#fff', '#ffe600', '#ff3b5c'], 120, 40, 120);
     updateHud();
@@ -1018,7 +1077,8 @@
     refreshLive();
     if (SIM) return;
     removeBubble(w);
-    popup((K.goal.xa + K.goal.xb) / 2, K.goal.y - 22, ordinal(w.rank), w.rank === 1 ? '#ffd84a' : '#fffaf0');
+    if (C3) popup(w.x, w.y - 14, ordinal(w.rank), w.rank === 1 ? '#ffd84a' : '#fffaf0', w.z);
+    else popup((K.goal.xa + K.goal.xb) / 2, K.goal.y - 22, ordinal(w.rank), w.rank === 1 ? '#ffd84a' : '#fffaf0');
     emit(w.x, K.goal.y, w.rank === 1 ? 40 : 12, [w.pal.main, '#fff', '#ffd84a'], 80, 120, 200, [0.5, 1.2]);
     const now = performance.now();
     if (w.rank === 1) {
@@ -1119,10 +1179,16 @@
   }
   function updateHud() {
     if (state !== 'race') return;
-    const s = Math.floor(simT - raceT0), t = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}  ${finished.length}/${racers.size} home`;
-    if (hud.textContent !== t) hud.textContent = t;
+    const s = Math.floor(simT - raceT0), t = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}  ${finished.length}/${racers.size}`;
+    if (hud.dataset.t !== t) { hud.dataset.t = t; hud.innerHTML = t + FLAG; }
     show(hud, true);
   }
+  // a little pixel checkered flag on a pole, for how many are home
+  const FLAG = (() => {
+    let r = '<rect x="0" y="0" width="1" height="12" fill="#1f1830"/><rect x="1" y="0" width="10" height="8" fill="#1f1830"/>';
+    for (let j = 0; j < 3; j++) for (let i = 0; i < 4; i++) r += `<rect x="${2 + i * 2}" y="${1 + j * 2}" width="2" height="2" fill="${(i + j) & 1 ? '#1f1830' : '#fffaf0'}"/>`;
+    return `<svg class="flag" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-label="home">${r}</svg>`;
+  })();
   let toastT;
   function toast(text) {
     if (SIM) return;
@@ -1256,7 +1322,9 @@
   function celebrate() {
     const cols = [winner.pal.main, winner.pal.spoke];
     for (let i = 0; i < 9; i++)
-      FW.shells.push({ x: rnd(W * 0.08, W * 0.92), y: H + 2, vy: -rnd(H * 0.55, H * 0.8), fuse: rnd(0.6, 1), wait: i * rnd(0.15, 0.35), c: i % 3 ? pick(FW_COLS) : cols });
+      FW.shells.push(C3   // (in 3D, all round the finish)
+        ? { x: winner.x + rnd(-220, 220), y: winner.y + 60, z: winner.z + rnd(-220, 60), vy: -rnd(220, 300), fuse: rnd(0.7, 1.1), wait: i * rnd(0.15, 0.35), c: i % 3 ? pick(FW_COLS) : cols }
+        : { x: rnd(W * 0.08, W * 0.92), y: H + 2, vy: -rnd(H * 0.55, H * 0.8), fuse: rnd(0.6, 1), wait: i * rnd(0.15, 0.35), c: i % 3 ? pick(FW_COLS) : cols });
   }
   function fireworks(dt) {
     for (let i = FW.shells.length - 1; i >= 0; i--) {
@@ -1267,13 +1335,15 @@
         const n = ri(22, 34), spd = rnd(26, 42);
         for (let k = 0; k < n; k++) {
           const a = k / n * Math.PI * 2 + rnd(-0.1, 0.1), v = spd * rnd(0.75, 1);
-          FW.sparks.push({ x: s.x, y: s.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, l: rnd(0.9, 1.5), c: s.c[k & 1] });
+          FW.sparks.push({ x: s.x, y: s.y, z: s.z, vx: Math.cos(a) * v, vy: Math.sin(a) * v, l: rnd(0.9, 1.5), c: s.c[k & 1] });
         }
         FW.shells.splice(i, 1);
       }
     }
     for (const q of FW.sparks) { q.vy += 22 * dt; q.vx *= 1 - dt; q.vy *= 1 - dt * 0.5; q.x += q.vx * dt; q.y += q.vy * dt; q.l -= dt; }
     for (let i = FW.sparks.length - 1; i >= 0; i--) if (FW.sparks[i].l <= 0) FW.sparks.splice(i, 1);
+  }
+  function drawFireworks() {
     for (const s of FW.shells) if (s.wait <= 0) {
       px(Math.round(s.x), Math.round(s.y), '#fff3a8');
       ctx.globalAlpha = 0.4; px(Math.round(s.x), Math.round(s.y) + 1, '#ffd84a'); px(Math.round(s.x), Math.round(s.y) + 2, '#ff8a20'); ctx.globalAlpha = 1;
@@ -1516,14 +1586,27 @@
     }
   }
 
-  // Dominoes: the first wheel to roll into a row tips the first one over, and the rest go down after it.
+  // Dominoes: a wheel that touches any one of a row tips it over, the way the wheel was going, and the rest
+  // go down one after another away from it. Knocked at either end, the whole row falls one way; knocked in
+  // the middle, it splits: those beyond it fall on away from it, and those before it fall back the other way.
+  // Each comes to rest leaning on the next, and the one at the end of each run lies flat. This is how far
+  // over domino i is (in radians, positive toward +x), for both views.
+  function domAngle(D, i) {
+    if (D.start < 0) return 0;
+    const n = D.ds.length, f = clamp((simT - D.start - Math.abs(i - D.i0) * 0.06) / 0.12, 0, 1);
+    const dir = i > D.i0 ? 1 : i < D.i0 ? -1 : D.d0;   // (+1: on toward the end of the row)
+    const flat = dir > 0 ? i === n - 1 : i === 0;
+    return f * (flat ? 1.5 : 0.95) * dir * D.f;
+  }
+  function knockDominoes(D, i, w) {
+    const n = D.ds.length;
+    D.start = simT; D.i0 = i;
+    D.d0 = i === 0 ? 1 : i === n - 1 ? -1 : Math.sign(w.vx * D.f) || 1;
+  }
   function drawDominoes() {
     for (const b of K.bands) for (const D of b.doms) {
-      const n = D.ds.length;
-      if (D.start >= 0 && simT > D.start + n * 0.06 + 4.5) D.start = -1;   // and stand back up
       D.ds.forEach((dx0, i) => {
-        const f = D.start < 0 ? 0 : clamp((simT - D.start - i * 0.06) / 0.12, 0, 1);
-        const a = f * (i === n - 1 ? 1.5 : 0.95) * D.f, ca = Math.cos(a), sa = Math.sin(a);
+        const a = domAngle(D, i), ca = Math.cos(a), sa = Math.sin(a);
         for (let s = 0; s < 7; s++) {
           const xx = Math.round(dx0 + sa * s), yy = Math.round(D.ys[i] - 1 - ca * s);
           px(xx, yy, s === 1 || s === 3 || s === 5 ? '#1f1830' : '#fffaf0');
@@ -1547,12 +1630,10 @@
     Object.assign(c, { hit: true, at: simT, fx: c.x, fy: c.y - 4, vx: f * (40 + rnd(0, 50)), vy: -rnd(90, 150), rot: 0, spin: f * rnd(8, 16) });
     emit(c.x, c.y - 3, 5, ['#ff7a1a', '#fff'], 30, 40, 160);
   }
-  function drawCones(dt) {
+  function drawCones() {
     for (const b of K.bands) for (const cs of b.cones) for (const c of cs.cs) {
-      if (!c.hit) { drawCone(Math.round(c.x), Math.round(c.y) - 1, 0); continue; }
-      if (simT - c.at > 5) { c.hit = false; continue; }
-      c.vy += 300 * dt; c.fx += c.vx * dt; c.fy += c.vy * dt; c.rot += c.spin * dt;
-      if (c.fy < H + 10) drawCone(Math.round(c.fx), Math.round(c.fy), c.rot);
+      if (!c.hit) drawCone(Math.round(c.x), Math.round(c.y) - 1, 0);
+      else if (c.fy < H + 10) drawCone(Math.round(c.fx), Math.round(c.fy), c.rot);
     }
   }
 
@@ -1608,11 +1689,6 @@
       rect('#d8d8e8', 16, kn + 2, 1, 21 - kn); rect('#8a8aa0', 16, 21, 2, 2);
       rect('#ff3b5c', 16, kn, 2, 2);
       ctx.globalAlpha = 1;
-      if (S.payAt && simT >= S.payAt) {
-        S.payAt = 0; S.won = simT;
-        emit(x, top + 6, 28, ['#ffd84a', '#fff3a8', '#e8a020'], 60, 120, 260, [0.6, 1.3]);
-        popup(x, top - 8, 'JACKPOT', '#ffd84a');
-      }
     }
   }
 
@@ -1741,6 +1817,9 @@
   const TAIL = PXS * 7;
   const DOTS = [[0.25, 2], [0.55, 1.5], [0.82, 1]].map(([at, k]) => ({ at, size: Math.round(PXS * k) }));
 
+  // where a wheel is on screen (its middle, and the top of it), from whichever view is showing
+  const screenOf = w => R3 ? R3.project(w) : { x: w.x * SCALE, y: w.y * SCALE, top: (w.y - RW) * SCALE, vis: true };
+
   // The names: always over each wheel, in its color with an ink outline. On the starting line they take
   // turns between two heights, so neighbours don't cover each other.
   function drawNames() {
@@ -1753,8 +1832,9 @@
     const lined = state === 'lobby' || state === 'count', order = lined ? [...live].sort((a, b) => a.x - b.x) : live;
     let i = 0;
     for (const w of order) {
-      const lift = lined ? (i++ & 1) * (ns + 1) : 0;
-      const x = w.x * SCALE, y = (w.y - RW) * SCALE - 4 - lift;
+      const lift = lined ? (i++ & 1) * (ns + 1) : 0, p = w.scr = screenOf(w);
+      if (!p.vis) continue;
+      const x = p.x, y = p.top - 4 - lift;
       w.ly = y - ns;   // (the top of the name, for the bubble to sit over)
       uctx.strokeText(w.name, x, y); uctx.fillStyle = w.pal.main; uctx.fillText(w.name, x, y);
     }
@@ -1811,7 +1891,10 @@
       const b = w.bub;
       if (!b) continue;
       if (now > w.sayUntil) { b.classList.remove('show'); w.dots.forEach(el => el.classList.remove('show')); continue; }
-      const wx = w.x * SCALE, wy = (w.y - RW - 1) * SCALE;
+      const p = w.scr || screenOf(w), hide = p.vis ? '' : 'hidden';
+      b.style.visibility = hide; w.dots.forEach(el => el.style.visibility = hide);
+      if (!p.vis) continue;
+      const wx = p.x, wy = p.top - SCALE;
       const tx = wx - w.bw / 2, ty = (w.ly ?? wy) - 4 - TAIL - w.bh;
       if (w.by == null) { w.bx = tx; w.by = ty; }
       const k = Math.min(1, dt * 10);
@@ -1857,6 +1940,7 @@
     if (isOwner && platform !== 'demo') ownerSeen(key, nm, color);
     if (cmd === CFG.joincmd) { join(key, nm, color); return; }
     if (cmd === CFG.startcmd) { if (isOwner || mod) startRace(); return; }
+    if (cmd === CFG.camcmd) { if ((isOwner || mod) && R3) R3.command(plain.slice(cmd.length).trim()); return; }
     const w = racers.get(key);
     if (!w || w.mode === 'done' || plain.startsWith('!')) return;
     const items = emotesOf(tokens || [{ t: 'text', v: plain }]);
@@ -1869,12 +1953,29 @@
     start: () => startRace(),
     say: (name, text, o = {}) => handleChat({ name, text, color: o.color, platform: o.platform || 'custom' }),
     newTrack: () => newTrack(),
+    cam: (arg = '') => R3 && R3.command(String(arg)),   // the 3D view's camera, like a mod's "!cam …"
   };
 
   // ---------------- main loop ----------------
-  let last = performance.now(), acc = 0;
+  let last = performance.now(), acc = 0, R3 = null, C3 = null;   // (R3: the 3D view, when it's on; C3: its course)
+
+  // What the 3D view (view3d.js) sees of the game: its state, read live, and a few bits of the pixel art
+  // (dice faces, chips, slot symbols, score text) for its textures, so both views look alike.
+  function view3d() {
+    const nchars = s => [...s].length;
+    return {
+      get K() { return K; }, get live() { return live; }, get racers() { return racers; }, get state() { return state; },
+      get simT() { return simT; }, get W() { return W; }, get H() { return H; }, get finished() { return finished; },
+      get winner() { return winner; }, get raceT0() { return raceT0; }, get C3() { return C3; },
+      parts, pops, FW, RW, ZT, CFG, C, SYMS, CHIP_COLS, shade, domAngle,
+      dieArt: face => bake(7, 7, () => drawDie(0, 0, face)),
+      spriteArt: kind => bake(5, 6, () => sprite(SPR[kind], 0, 0)),
+      textArt: (text, c) => bake(nchars(text) * 4 + 3, 7, () => drawText(text, (nchars(text) * 4 + 3) / 2, 1, c)),
+    };
+  }
   function stepAll(dt) {
     simT += dt;
+    if (C3) { C3.step(live, dt, state === 'race'); return; }
     movers(dt);
     for (const w of live) if (w.mode === 'free') moveFree(w, dt); else scripted(w, dt);
     pairs(live);
@@ -1898,20 +1999,48 @@
     for (const q of rings) { q.r += 70 * dt; q.l -= dt; }
     for (let i = rings.length - 1; i >= 0; i--) if (rings[i].l <= 0) rings.splice(i, 1);
     for (const w of live) {
-      if (w.boostT > 0) { w.boostT -= dt; if (Math.random() < 0.6) emit(w.x, w.y + RW - 1, 1, ['#ffde59', '#ff8a00', C.boostA], 30, 15, 120, [0.2, 0.45]); if (w.boostT <= 0) w.boostT = 0; }
+      if (w.boostT > 0) { w.boostT -= dt; if (Math.random() < 0.6) emit(w.x, w.y + RW - 1, 1, ['#ffde59', '#ff8a00', C.boostA], 30, 15, 120, [0.2, 0.45], w.z); if (w.boostT <= 0) w.boostT = 0; }
       w.trail.push({ x: w.x, y: w.y }); if (w.trail.length > 9) w.trail.shift();
     }
     for (let i = parts.length - 1; i >= 0; i--) {
       const q = parts[i]; q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.l -= dt;
       if (q.l <= 0) parts.splice(i, 1);
     }
+    updateFx(dt);
 
     const t = now / 1000;
+    if (R3) R3.render(t, dt); else draw2d(t, dt);
+    drawNames();
+    placeBubbles(rdt, now);
+    requestAnimationFrame(frame);
+  }
+
+  // the machine's moving bits that aren't physics, for either view
+  function updateFx(dt) {
+    fireworks(dt);
+    if (C3) { C3.update(simT); return; }
+    for (const S of K.slots) if (S.payAt && simT >= S.payAt) {
+      S.payAt = 0; S.won = simT;
+      emit(S.x, S.base - 22, 28, ['#ffd84a', '#fff3a8', '#e8a020'], 60, 120, 260, [0.6, 1.3]);
+      popup(S.x, S.base - 36, 'JACKPOT', '#ffd84a');
+    }
+    for (const b of K.bands) {
+      // dominoes stand back up a while after they've all gone down, and cones that went flying come back
+      for (const D of b.doms) if (D.start >= 0 && simT > D.start + D.ds.length * 0.06 + 4.6) D.start = -1;
+      for (const cs of b.cones) for (const c of cs.cs) {
+        if (!c.hit) continue;
+        if (simT - c.at > 5) { c.hit = false; continue; }
+        c.vy += 300 * dt; c.fx += c.vx * dt; c.fy += c.vy * dt; c.rot += c.spin * dt;
+      }
+    }
+  }
+
+  function draw2d(t, dt) {
     ctx.clearRect(0, 0, W, H);
     if (K.sky) { searchlights(t); ctx.drawImage(K.sky, 0, 0); }
     if (CFG.decor) drawDecor(t, dt);
     drawCogs(t);
-    fireworks(dt);
+    drawFireworks();
     drawSlots(t);
     drawFunnels('back');
     drawGoal(t, false);
@@ -1922,7 +2051,7 @@
     for (const c of K.bumpers) drawBumper(Math.round(c.x), Math.round(c.y), c.r, c.lit > 0);
     drawFlippers();
     drawDominoes();
-    drawCones(dt);
+    drawCones();
     drawLamps(t);
     for (const w of live) drawWheel(w);
     drawPipes();
@@ -1935,9 +2064,6 @@
     }
     for (const q of pops) { ctx.globalAlpha = Math.min(1, q.l / 0.4); drawText(q.text, clamp(q.x, q.text.length * 2 + 2, W - q.text.length * 2 - 2), q.y, q.c); }
     ctx.globalAlpha = 1;
-    drawNames();
-    placeBubbles(rdt, now);
-    requestAnimationFrame(frame);
   }
 
   // While the source is hidden the browser stops drawing; the game picks up where it left off.
@@ -2315,13 +2441,13 @@
       for (let i = 0; i < 30; i++) { const w = makeWheel('t:' + i, 'w' + i, ''); racers.set(w.key, w); dropIn(w); }
       refreshLive();
       for (let i = 0; i < 240 * 2; i++) stepAll(STEP);
-      state = 'race'; raceT0 = simT; K.doorsOpen = true; for (const s of K.slats) s.on = false;
+      state = 'race'; raceT0 = simT; K.doorsOpen = true; for (const s of K.slats) s.on = false; if (C3) C3.open();
       for (const w of racers.values()) { w.prog = simT; w.bestY = w.y; }
       while (finished.length < racers.size && simT - raceT0 < 400) stepAll(STEP);
       const ws = [...racers.values()];
       out.push({ W, H, floors: K.bands.map(b => b.kind).join(','), first: +(finished[0]?.time ?? -1).toFixed(1), last: +(finished.at(-1)?.time ?? -1).toFixed(1),
         done: finished.length, kicks: ws.reduce((a, w) => a + w.kicks, 0), warps: ws.reduce((a, w) => a + w.warps, 0),
-        loops: K.bands.reduce((a, b) => a + b.loops.length, 0), pipes: K.pipes.length, traps: K.traps.length, hops: K.hops.length });
+        loops: K.bands.reduce((a, b) => a + b.loops.length, 0), pipes: K.pipes?.length, stuck: K.stuck, course: K.pieces?.map(p => p.kind).join(','), traps: K.traps.length, hops: K.hops.length });
     }
     const pre = document.createElement('pre'); pre.id = 'selftest'; pre.textContent = JSON.stringify(out);
     document.body.appendChild(pre);
@@ -2329,13 +2455,20 @@
   }
 
   // ---------------- boot ----------------
+  // In 3D the race runs on its own course (course3d.js) before anything's built; if that can't load, it's 2D.
   resize();
+  const ready = DEPTH
+    ? import('./course3d.js').then(m => { C3 = m.createCourse({ RW, G, emit, popup, SYMS, knockDominoes, onFinish: w => { w.m3 = 'done'; finish(w); } }); })
+      .catch(e => console.warn("[drop] the 3D course didn't load, so it's 2D", e))
+    : Promise.resolve();
+  ready.then(boot);
+  function boot() {
   if (SELFTEST) { selfTest(SELFTEST); return; }
   build();
   addEventListener('resize', () => {
     const w = W, h = H;
     resize();
-    if (W === w && H === h) return;
+    if (W === w && H === h || C3) return;   // (the 3D course doesn't depend on the source's size)
     const ws = [...racers.values()];
     build();
     if (state === 'lobby' || state === 'count') for (const r of ws) dropIn(r);
@@ -2344,9 +2477,15 @@
       for (const r of live) warp(r, 0);
     }
   });
-  updateSign(); updateHost();
-  show(sign, true);
-  requestAnimationFrame(frame);
+  const begin = () => { last = performance.now(); updateSign(); updateHost(); show(sign, true); requestAnimationFrame(frame); };
+  // The 3D view (view3d.js) draws the same race, reading the game through view3d(). If it can't load (say
+  // the three.js CDN is down), the 2D view takes over.
+  if (CFG.view === '3d' && C3) {
+    document.body.classList.add('v3d');
+    import('./view3d.js').then(m => { R3 = m.create(view3d()); })
+      .catch(e => { console.warn('[drop] the 3D view didn\'t load, so it\'s 2D', e); document.body.classList.remove('v3d'); })
+      .finally(begin);
+  } else begin();
 
   if (CFG.channel) connectTwitch(CFG.channel);
   if (CFG.kick) connectKick(CFG.kick);
@@ -2357,6 +2496,7 @@
     else console.warn('[drop] youtube= needs ytkey= (or a ws:// bridge URL)');
   }
   if (CFG.demo) runDemo();
+  }
 })();
 </script>
 </body>

@@ -30,17 +30,38 @@ Right-click the source → **Interact** and move the mouse over it:
 Every setting can also be a URL parameter, which overrides it, e.g. `index.html?channel=yourchannel`. The full
 list is in the comment at the top of `index.html`. `?demo=1` fills it with fake chatters who join and race.
 
+## 3D view
+
+Set **View** to **3D** in the settings (or add `?view=3d`) for a 3D race instead: down one long, wide,
+continuous track that winds through space, built fresh every race (`course3d.js`) and drawn with three.js
+(`view3d.js`, loaded from jsDelivr). It has banked turns and switchbacks, helixes spiralling down, corkscrew
+loops, jumps fed by a conveyor, glass funnels the balls spiral down through onto the track below, a
+pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts of dice, chips and
+bumpers to weave between, and lane splits with a boost pad down one side and a slow conveyor down the other.
+The racers are glossy balls in their chat colors with their initial on them, rolling along and across the
+track. It's all under a night sky with a city on the horizon and searchlights, so unlike the 2D view the
+source isn't see-through. Joining, starting, the signs, names and emote bubbles work the same as in 2D. OBS
+needs its browser hardware acceleration on (the default).
+
+The camera starts on **auto**: the starting line in the lobby, the leader during the race, and the winner
+coming home. In OBS's Interact window you can take over:
+
+- **Drag** to orbit, **mouse wheel** to zoom, **right-drag** to pan.
+- **Click a racer** to follow them; **double-click** empty space to go back to auto.
+- Keys: **A** auto, **O** the whole course, **F** leave the camera where it is, **← / →** follow the next racer.
+
 ## Chat commands
 
-| Command  | Who                      | What                                      |
-| -------- | ------------------------ | ----------------------------------------- |
-| `!join`  | anyone                   | join the next race                        |
-| `!start` | mods and the broadcaster | start the race (needs at least one racer) |
+| Command       | Who                      | What                                                        |
+| ------------- | ------------------------ | ----------------------------------------------------------- |
+| `!join`       | anyone                   | join the next race                                          |
+| `!start`      | mods and the broadcaster | start the race (needs at least one racer)                   |
+| `!cam name`   | mods and the broadcaster | 3D view: follow that racer (`!cam all`: the whole course; `!cam`: auto) |
 
-Both can be renamed in the settings.
+All three can be renamed in the settings.
 
 ## Testing
 
-`index.html?selftest=10` races 30 wheels down 10 fresh machines as fast as it can, with no drawing, and writes
+`index.html?selftest=10` (add `&view=3d` for the 3D course, which needs serving over http) races 30 wheels down 10 fresh machines as fast as it can, with no drawing, and writes
 how each race went into the page: how long the first and last wheels took, and whether any wheel needed a
 nudge or a lift to get unstuck (it should be all zeros, or very nearly).
