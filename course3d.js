@@ -229,23 +229,27 @@ export function createCourse(g) {
       lead.gapTo = out.length;
       dress(add(catcher(130)));
     } else if (kind === 'roulette') {
-      // A roulette wheel, fed along its rim like a funnel: the balls roll round the sloping ball track,
-      // slowing, drop onto the spinning wheel, bounce over a few pockets and settle in one, and ride it
-      // round till a trap door in the bottom of the pocket drops them into a glass funnel under the wheel,
-      // which spirals them down and out onto a catcher below. Red's a boost, green (0) a bigger one, black
-      // nothing. (See stepFunnel and stepPocket.)
+      // A roulette wheel, the track running out over it: the balls drop onto it, roll round the sloping ball
+      // track till they've slowed enough to come down the number ring onto the spinning wheel, skip over
+      // the frets between its pockets and settle in one. The bottom of each pocket is a trap door, which
+      // opens under a ball that's settled on it; it falls through into a glass funnel under the wheel, which
+      // spirals it down and out onto a catcher below. Red's a boost, green (0) a bigger one, black nothing.
+      // It's all physics (see stepWheel).
       const lead = add(straight(60, -0.02));
-      const R = 2 * HW + rnd(22, 28), yaw = tur.yaw, side = pick([-1, 1]), re = R - HW - 4, k = 0.32;
+      const R = 2 * HW + rnd(34, 38), yaw = tur.yaw, side = pick([-1, 1]), re = R - HW - 4, k = 0.32;
       const cx = tur.x - Math.sin(yaw) * side * re, cz = tur.z + Math.cos(yaw) * side * re, cy = tur.y - 4;
-      // the wheel's edge, where its pockets are, and the cone in its middle the balls bounce off
-      const Rr = R * 0.75, Rp = Rr * 0.81, Rh = Rr * 0.72;
-      const F = { wheel: true, cx, cy, cz, R, Rr, Rp, Rh, rs: Rh + RW, k, yR: cy - k * (R - Rr) - 0.3, H: 40, rot: rnd(0, TAU), om: 0.9 * pick([-1, 1]), held: [], doors: [] };
-      // the funnel under the wheel: its rim just under the pockets, its spout where the wheel's chute was
-      const ur = Rp + 4, uy = F.yR - 3.5, uh = uy - (cy - F.H), urs = 2 * RW + 1;
+      // the ball track from the rim in to Rr; the number ring sloping down from there to the pockets, which
+      // run from Rpo in to Rh; and inside them the cone in the middle
+      const Rr = R - 12, Rpo = Rr - 6, Rh = Rpo - 9, yT = cy - k * (R - Rr), y0 = yT - 2.2;
+      const F = { wheel: true, cx, cy, cz, R, Rr, Rpo, Rh, k, yT, y0, sN: (yT - y0) / (Rr - Rpo), rs: RW, H: 44, rot: rnd(0, TAU), om: 0.9 * pick([-1, 1]),
+        dopen: new Float64Array(37), rest: new Float64Array(37), until: new Float64Array(37) };
+      // the funnel under the wheel: its rim under the pockets (below the trap doors hanging open), its spout
+      // far enough under for the catcher
+      const ur = Rpo + 4, uy = y0 - 9, uh = uy - (cy - F.H), urs = 2 * RW + 1;
       F.under = { cx, cy: uy, cz, R: ur, rs: urs, H: uh, Kf: uh / (ur / urs - 1) };
       lead.end = 'funnel'; lead.fun = F;
       lead.extra = [];
-      for (let k2 = 0; k2 < 24; k2++) for (const [rr, yy] of [[R + 4, cy], [Rr, F.yR], [ur * 0.5, uy - uh * 0.6], [urs, cy - F.H]]) lead.extra.push([cx + Math.cos(k2 / 24 * TAU) * rr, yy, cz + Math.sin(k2 / 24 * TAU) * rr]);
+      for (let k2 = 0; k2 < 24; k2++) for (const [rr, yy] of [[R + 4, cy], [Rr, y0], [ur * 0.5, uy - uh * 0.6], [urs, cy - F.H]]) lead.extra.push([cx + Math.cos(k2 / 24 * TAU) * rr, yy, cz + Math.sin(k2 / 24 * TAU) * rr]);
       tur = { x: cx, y: cy - F.H - 30, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: 0 };
       lead.gapTo = out.length;
       dress(add(catcher(130)));
@@ -471,7 +475,7 @@ export function createCourse(g) {
     if (w.s >= p.len) {
       if (p.kind === 'goal' || w.pi === pieces.length - 1) { w.s = p.len - 0.01; w.vs = 0; }
       else if (p.end === 'air') { at(p, p.len, F1); toAir(w, F1); return; }
-      else if (p.end === 'funnel') { place3(w); toFunnel(w, p.fun); return; }
+      else if (p.end === 'funnel') { place3(w); p.fun.wheel ? toWheel(w, p.fun) : toFunnel(w, p.fun); return; }
       else { w.s -= p.len; w.pi++; }
     } else if (w.s < 0) {
       const q = pieces[w.pi - 1];
@@ -524,14 +528,12 @@ export function createCourse(g) {
   // place and speed become how far out it is (r) and round (th), how fast it's going in or out, and its
   // spin round the middle (L, angular momentum). It drops onto the glass from the end of the track first.
   const FUNNEL_DRAG = 0.55;   // (how fast rolling drag takes its speed round, so it spirals in)
-  // (a roulette wheel's ball track is a shallow cone down to the wheel, which is flat)
-  const bowlY = (F, r) => F.wheel ? F.cy - F.k * (F.R - Math.max(r, F.Rr)) : F.cy - F.Kf * (F.R / r - 1);
-  const slope = (F, r) => F.wheel ? (r > F.Rr ? F.k : 0) : F.Kf * F.R / (r * r);   // (how steep, and how fast that changes)
-  const bend = (F, r) => F.wheel ? 0 : -2 * F.Kf * F.R / (r * r * r);
+  const bowlY = (F, r) => F.cy - F.Kf * (F.R / r - 1);
+  const slope = (F, r) => F.Kf * F.R / (r * r), bend = (F, r) => -2 * F.Kf * F.R / (r * r * r);   // (how steep, and how fast that changes)
   function toFunnel(w, F) {
     const f = w.fr, rx = w.X - F.cx, rz = w.Z - F.cz, r = clamp(Math.hypot(rx, rz), F.rs + 1, F.R - RW - 0.6);
     const vx = f.T[0] * w.vs + f.B[0] * w.vu, vy = f.T[1] * w.vs + f.B[1] * w.vu, vz = f.T[2] * w.vs + f.B[2] * w.vu;
-    Object.assign(w, { m3: 'funnel', F, frad: r, fth: Math.atan2(rz, rx), fvr: (vx * rx + vz * rz) / r, fL: (-rz * vx + rx * vz), fvh: vy, flap: 0, pocket: null });
+    Object.assign(w, { m3: 'funnel', F, frad: r, fth: Math.atan2(rz, rx), fvr: (vx * rx + vz * rz) / r, fL: (-rz * vx + rx * vz), fvh: vy });
     w.fh = Math.max(0, w.Y - bowlY(F, r) - RW);
     w.land = pieces[w.pi].landOn;
   }
@@ -540,7 +542,6 @@ export function createCourse(g) {
   // from drag, which takes a little off it, so it circles lower and lower; in or out it's pulled down the
   // slope and flung out by going round.
   function stepFunnel(w, dt) {
-    if (w.pocket) return stepPocket(w, dt);
     const F = w.F, r = w.frad, g = G * ROLL, hp = slope(F, r), hpp = bend(F, r), thd = w.fL / (r * r);
     let rdd;
     if (w.fh > 0) {   // still dropping onto the glass from the end of the track
@@ -551,68 +552,156 @@ export function createCourse(g) {
     w.fvr += rdd * dt; w.fvr *= 1 - 0.3 * dt; w.fL *= 1 - FUNNEL_DRAG * dt;
     w.frad += w.fvr * dt; w.fth += thd * dt;
     if (w.frad > F.R - RW - 0.6) { w.frad = F.R - RW - 0.6; if (w.fvr > 0) w.fvr *= -0.35; }   // (the rim's lip)
-    if (F.wheel) {
-      // once it's been round once (or it's stopped dead), onto the wheel and into the pockets; till then it
-      // skims over the frets, and going round flings it back out onto the ball track, or it bounces off the middle
-      w.flap += Math.abs(thd) * dt;
-      if (w.frad < F.Rr && !w.fh && (w.flap > TAU || Math.abs(w.fL) / w.frad < 12)) { w.pocket = { phi: wrap(w.fth - F.rot), phd: thd - F.om, n: null }; return stepPocket(w, 0); }
-      if (w.frad < F.rs) { w.frad = F.rs; if (w.fvr < 0) w.fvr *= -0.5; }
-    } else if (w.frad <= F.rs + 0.4) return spout(w);
+    if (w.frad <= F.rs + 0.4) return spout(w);
     // the ball's middle: out from the glass, square to it
     const h1 = slope(F, w.frad), nl = Math.hypot(1, h1), out = w.frad - h1 / nl * RW;
-    w.X = F.cx + Math.cos(w.fth) * out; w.Z = F.cz + Math.sin(w.fth) * out; w.Y = bowlY(F, w.frad) + RW / nl + w.fh + (F.wheel && w.frad < F.Rr ? 1.1 : 0);
+    w.X = F.cx + Math.cos(w.fth) * out; w.Z = F.cz + Math.sin(w.fth) * out; w.Y = bowlY(F, w.frad) + RW / nl + w.fh;
     flat(w);
   }
 
-  // out of the bottom: of a funnel's spout, or the chute under a roulette wheel
+  // out of the bottom of a funnel's spout
   function spout(w) {
     const F = w.F;
-    Object.assign(w, { m3: 'air', pocket: null, X: F.cx + rnd(-0.5, 0.5), Y: F.cy - F.H - 2, Z: F.cz + rnd(-0.5, 0.5), vx: rnd(-6, 6), vy: -60, vz: rnd(-6, 6) });
+    Object.assign(w, { m3: 'air', X: F.cx + rnd(-0.5, 0.5), Y: F.cy - F.H - 2, Z: F.cz + rnd(-0.5, 0.5), vx: rnd(-6, 6), vy: -60, vz: rnd(-6, 6) });
     flat(w);
   }
-  // In a roulette wheel's pockets: going round with the wheel, it skips over the frets between them, slower
-  // and slower, till it drops into one (not one with a ball already in it). It rides that round a moment,
-  // then drops through.
+  // ---- roulette wheels ----
+  // A ball on one is how far out it is from the middle (r) and round (th), how fast in or out, its spin
+  // round the middle (L), and the height of its bottom (wy). The surface is all one piece, round the middle:
+  // the ball track sloping down from the rim, the number ring sloping more steeply down to the pockets, the
+  // pockets' floors (their trap doors) flat, and the cone in the middle rising. The wheel itself (the number
+  // ring in) turns, and a ball rolling on it is dragged along by it. The frets between the pockets are walls,
+  // which a ball going fast enough across them skips over and a slow one bounces back off; once one's
+  // settled in a pocket, its trap door opens and it falls through.
   const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
   const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]), SLOT = TAU / 37;
   const pocketColor = n => n === 0 ? 'green' : REDS.has(n) ? 'red' : 'black';
-  function stepPocket(w, dt) {
-    const F = w.F, P = w.pocket;
-    let hop = 0;
-    w.frad += (F.Rp - w.frad) * Math.min(1, 6 * dt);
-    if (P.n == null) {
-      P.phd *= 1 - 2.5 * dt; P.phi += P.phd * dt;
-      hop = Math.abs(Math.sin(P.phi / SLOT * Math.PI)) * Math.min(1.6, Math.abs(P.phd));
-      if (Math.abs(P.phd) < 0.35) {
-        const j = Math.round(P.phi / SLOT), i = ((j % 37) + 37) % 37;
-        if (F.held[i]?.pocket) P.phd = (Math.sign(P.phd) || 1) * 0.9;   // (taken: on to the next)
-        else {
-          F.held[i] = w; P.i = i; P.to = j * SLOT; P.n = WHEEL[i]; P.at = t;
-          const c = pocketColor(P.n);
-          w.rBoost = c === 'green' ? 230 : c === 'red' ? 160 : 0;
-          popup(w.X, -w.Y - 8, P.n + ' ' + c.toUpperCase(), { green: '#3fdc7a', red: '#ff3b5c', black: '#e8e6f4' }[c], w.Z);
-          if (c === 'green') emit(w.X, -w.Y, 24, ['#3fdc7a', '#ffd84a', '#fff'], 60, 80, 200, [0.5, 1.1], w.Z);
-        }
+  const HUB = 0.18, FRET = 0.2, FRET_H = 1.8;   // (the cone's slope; half a fret's thickness, and its height)
+  const wheelH = (F, r) => r >= F.Rr ? F.yT + F.k * (r - F.Rr) : r >= F.Rpo ? F.y0 + F.sN * (r - F.Rpo) : r >= F.Rh ? F.y0 : F.y0 + HUB * (F.Rh - r);
+  const wheelS = (F, r) => r >= F.Rr ? F.k : r >= F.Rpo ? F.sN : r >= F.Rh ? 0 : -HUB;
+  const pocketAt = (F, th) => Math.round((((th - F.rot) % TAU) + TAU) % TAU / SLOT) % 37;
+  function toWheel(w, F) {
+    const f = w.fr, rx = w.X - F.cx, rz = w.Z - F.cz, r = clamp(Math.hypot(rx, rz), 1, F.R - RW - 0.6);
+    const vx = f.T[0] * w.vs + f.B[0] * w.vu, vy = f.T[1] * w.vs + f.B[1] * w.vu, vz = f.T[2] * w.vs + f.B[2] * w.vu;
+    Object.assign(w, { m3: 'wheel', F, frad: r, fth: Math.atan2(rz, rx), fvr: (vx * rx + vz * rz) / r, fL: (-rz * vx + rx * vz), wy: w.Y - RW, fvh: vy, air: true, hole: -1, onT: t });
+    w.land = pieces[w.pi].landOn;
+  }
+  // The edges of a pocket's hole with its door open: the number ring sloping up outside it and the cone
+  // inside it, and the corners where they meet the floor. A ball over the hole rests on them, and rolls off
+  // them into it. (`overHole`: near enough that it's touching them, not the floor or the slopes further out.)
+  const SO = RW * HUB / Math.hypot(HUB, 1);
+  const overHole = (F, r, th) => r > F.Rh - SO && r < F.Rpo + RW * F.sN / Math.hypot(F.sN, 1) && F.dopen[pocketAt(F, th)] > 0.3;
+  function holeEdges(w, F) {
+    for (const [er, sd, sl] of [[F.Rpo, -1, F.sN], [F.Rh, 1, HUB]]) {
+      const cyB = w.wy + RW, dr = w.frad - er, dy = cyB - F.y0;
+      // the slope beyond the edge (a plane through the corner, rising away from the hole), or the corner itself
+      const nl = Math.hypot(sl, 1), pr = sd * sl / nl, py = 1 / nl, dist = dr * pr + dy * py, rc = w.frad - pr * dist;
+      let nr, ny, d;
+      if ((rc - er) * -sd >= 0) { if (dist >= RW) continue; nr = pr; ny = py; d = dist; }
+      else { d = Math.hypot(dr, dy); if (d >= RW || d < 1e-6) continue; nr = dr / d; ny = dy / d; }
+      w.frad += nr * (RW - d); w.wy += ny * (RW - d);
+      const vn = w.fvr * nr + w.fvh * ny; if (vn < 0) { w.fvr -= vn * nr; w.fvh -= vn * ny; }
+    }
+  }
+  // The frets, solid: across one and up, a ball's kept out of it. Hitting one fast enough it rides up over
+  // the top and skips across to the next pocket; slower, it bounces back off.
+  function frets(w, F) {
+    const r = w.frad;
+    if (!(r > F.Rh - 1.4 && r < F.Rpo + 1.4 && w.wy < F.y0 + FRET_H && w.wy > F.y0 - 0.05)) return;
+    const phi = wrap(w.fth - F.rot), fa = (Math.round(phi / SLOT - 0.5) + 0.5) * SLOT;
+    const tx = r * Math.sin(wrap(phi - fa)), cyB = w.wy + RW, top = F.y0 + FRET_H;
+    const qx = clamp(tx, -FRET, FRET), qy = Math.min(cyB, top);
+    let dx = tx - qx, dy = cyB - qy, d = Math.hypot(dx, dy);
+    if (d < 1e-6) { dx = Math.sign(tx) || 1; dy = 0; d = 1; w.fth = F.rot + fa + dx * (FRET + 0.01) / r; }   // (right in it: out the side it's on)
+    if (d >= RW) return;
+    const nx = dx / d, ny = dy / d, pen = RW - Math.min(d, RW);
+    w.fth += nx * pen / r; w.wy += ny * pen;
+    let v = w.fL / r - F.om * r;
+    const vn = v * nx + w.fvh * ny;
+    if (vn < 0) { v -= 1.3 * vn * nx; w.fvh -= 1.3 * vn * ny; w.fL = r * (F.om * r + v); }
+    if (w.wy > wheelH(F, w.frad) + 0.01) w.air = true;
+  }
+  function stepWheel(w, dt) {
+    const F = w.F, g = G * ROLL;
+    let r = w.frad;
+    const thd = w.fL / (r * r), through = w.wy < F.y0 - 0.05;
+    const ground = (through || overHole(F, r, w.fth)) ? -Infinity : wheelH(F, r);
+    if (w.air || w.wy > ground + 0.01) {
+      // in the air (dropped onto it, skipping over a fret, or falling through a pocket): flying free, so
+      // going round only carries it outward, and falling
+      w.air = true;
+      w.fvh -= G * dt; w.wy += w.fvh * dt;
+      w.fvr += r * thd * thd * dt; w.frad += w.fvr * dt; w.fth += thd * dt;
+      r = w.frad;
+      const g2 = (through || overHole(F, r, w.fth)) ? -Infinity : wheelH(F, r);
+      if (g2 === -Infinity) holeEdges(w, F);   // (over an open trap door, or through it: only its edges hold it up)
+      if (w.wy <= g2) {   // down on it
+        w.wy = g2; w.air = false;
+        if (w.fvh < -40) { w.fvh *= -0.25; w.air = true; } else w.fvh = 0;
       }
     } else {
-      P.phi += (P.to - P.phi) * Math.min(1, 8 * dt);
-      // its trap door swings open, and it drops through into the funnel underneath, going round with the wheel
-      if (t - P.at > 1.25 && !P.open) { P.open = true; F.doors[P.i] = t; }
-      if (t - P.at > 1.4) {
-        const U = F.under, r = clamp(w.frad, U.rs + 1, U.R - RW - 0.6);
-        Object.assign(w, { pocket: null, F: U, frad: r, fvr: 0, fL: r * r * F.om, fvh: 0, flap: 0 });
-        w.fh = Math.max(0, w.Y - RW - bowlY(U, r));
-        return;
+      // rolling on it: pulled down its slope and flung out by going round; on the wheel, dragged along by it
+      const hp = wheelS(F, r);
+      w.fvr += (r * thd * thd - g * hp) / (1 + hp * hp) * dt;
+      if (r < F.Rr) {
+        const k = 1 - Math.exp(-1.2 * dt), vt = w.fL / r, vs = F.om * r;
+        w.fL = r * (vt + (vs - vt) * k); w.fvr *= 1 - k;
+      } else { w.fL *= 1 - FUNNEL_DRAG * dt; w.fvr *= 1 - 0.3 * dt; }
+      w.frad += w.fvr * dt; w.fth += w.fL / (r * r) * dt;
+      r = w.frad;
+      const g2 = overHole(F, r, w.fth) ? -Infinity : wheelH(F, r);
+      if (g2 === -Infinity) w.air = true; else w.wy = g2;
+    }
+    if (w.frad > F.R - RW - 0.6) { w.frad = F.R - RW - 0.6; if (w.fvr > 0) w.fvr *= -0.35; }   // (the rim)
+    if (w.frad < 1) { w.frad = 1; w.fvr = Math.abs(w.fvr); }
+    r = w.frad;
+    const vrelOf = () => w.fL / r - F.om * r, setVrel = v => { w.fL = r * (F.om * r + v); };
+    if (w.wy < F.y0 - 0.05) {
+      // going through a pocket's open trap door: kept inside the hole by its edges (the ring outside it, the
+      // cone inside, and the frets either side, with the doors hanging down beside them)
+      if (w.hole < 0) {
+        w.hole = pocketAt(F, w.fth);
+        const n = WHEEL[w.hole], c = pocketColor(n);
+        w.rBoost = c === 'green' ? 230 : c === 'red' ? 160 : 0;
+        popup(w.X, -w.Y - 8, n + ' ' + c.toUpperCase(), { green: '#3fdc7a', red: '#ff3b5c', black: '#e8e6f4' }[c], w.Z);
+        if (c === 'green') emit(w.X, -w.Y, 24, ['#3fdc7a', '#ffd84a', '#fff'], 60, 80, 200, [0.5, 1.1], w.Z);
+      }
+      F.until[w.hole] = Math.max(F.until[w.hole], t + 0.5);   // (it stays open till it's gone)
+      for (const [er, sd] of [[F.Rpo, -1], [F.Rh, 1]]) if ((w.frad - er) * sd <= 0) { w.frad = er + sd * 0.01; if (w.fvr * sd < 0) w.fvr = 0; }
+      r = w.frad;
+      const gap = SLOT / 2 - Math.asin(Math.min(1, (RW + FRET + 0.3) / r)), d = wrap(w.fth - F.rot - w.hole * SLOT);
+      if (Math.abs(d) > gap) { w.fth = F.rot + w.hole * SLOT + Math.sign(d) * gap; setVrel(0); }
+      // below the wheel: on into the funnel underneath
+      if (w.wy < F.y0 - 7.5) {
+        const U = F.under, r2 = clamp(w.frad, U.rs + 1, U.R - RW - 0.6);
+        Object.assign(w, { m3: 'funnel', F: U, frad: r2, hole: -1 });
+        w.fh = Math.max(0, w.wy - bowlY(U, r2));
+        stepFunnel(w, 0); return;
+      }
+    } else if (r > F.Rh - 1.4 && r < F.Rpo + 1.4 && w.wy < F.y0 + FRET_H) {
+      frets(w, F);
+      // settled on a trap door: it opens
+      if (!w.air && r < F.Rpo + 1 && r > F.Rh && Math.abs(vrelOf()) < 10) {
+        const p = pocketAt(F, w.fth);
+        F.rest[p] += 1.5 * dt;
+        if (F.rest[p] > 0.8) { F.until[p] = t + 1.2; F.rest[p] = 0; }
       }
     }
-    w.fth = F.rot + P.phi;
-    w.X = F.cx + Math.cos(w.fth) * w.frad; w.Z = F.cz + Math.sin(w.fth) * w.frad; w.Y = F.yR + RW + hop;
+    // (in case one never settles)
+    if (t - w.onT > 40) { note('wheel'); Object.assign(w, { m3: 'funnel', F: F.under, frad: F.under.R * 0.6, fh: 0, fvh: 0, hole: -1 }); return; }
+    w.X = F.cx + Math.cos(w.fth) * w.frad; w.Z = F.cz + Math.sin(w.fth) * w.frad; w.Y = w.wy + RW;
     flat(w);
   }
 
   // the flippers, swinging up now and then; the roulette wheels turning; and the start gate
   function movers(dt) {
-    for (const F of K.wheels) F.rot += F.om * dt;
+    for (const F of K.wheels) {
+      F.rot += F.om * dt;
+      for (let i = 0; i < 37; i++) {
+        F.rest[i] = Math.max(0, F.rest[i] - 0.5 * dt);
+        F.dopen[i] = t < F.until[i] ? Math.min(1, F.dopen[i] + 5 * dt) : Math.max(0, F.dopen[i] - 2.5 * dt);
+      }
+    }
     for (const o of K.moles) {
       if (!o.until && t >= o.next) { o.until = t + rnd(0.7, 1.5); o.rose = t; }
       if (o.until && t < o.until) o.up = Math.min(1, o.up + 9 * dt);
@@ -644,17 +733,18 @@ export function createCourse(g) {
   // Balls bump into each other in the world; on the track, what that does to them is along and across it.
   function pairs(ws) {
     // (balls right at a funnel's spout don't block each other: they just go through)
-    const bumps = w => w.m3 === 'track' || w.m3 === 'air' || (w.m3 === 'funnel' && !w.pocket && w.frad > w.F.rs + 3);
+    const bumps = w => w.m3 === 'track' || w.m3 === 'air' || (w.m3 === 'funnel' && w.frad > w.F.rs + 3) || (w.m3 === 'wheel' && w.wy > w.F.y0 - 0.05);
+    const round = w => w.m3 === 'funnel' || w.m3 === 'wheel';
     // (in a funnel, in or out is along the radius and round is across it)
     const radial = w => { const c = Math.cos(w.fth), sn = Math.sin(w.fth); return [c, sn, -sn, c]; };
     const vel = (w, o) => {
       if (w.m3 === 'track') { o[0] = w.vs * w.fr.T[0] + w.vu * w.fr.B[0]; o[1] = w.vs * w.fr.T[1] + w.vu * w.fr.B[1]; o[2] = w.vs * w.fr.T[2] + w.vu * w.fr.B[2]; }
-      else if (w.m3 === 'funnel') { const [cr, sr, ct, st] = radial(w), vt = w.fL / w.frad; o[0] = w.fvr * cr + vt * ct; o[1] = 0; o[2] = w.fvr * sr + vt * st; }
+      else if (round(w)) { const [cr, sr, ct, st] = radial(w), vt = w.fL / w.frad; o[0] = w.fvr * cr + vt * ct; o[1] = 0; o[2] = w.fvr * sr + vt * st; }
       else { o[0] = w.vx; o[1] = w.vy; o[2] = w.vz; }
       return o;
     };
     const nudge = (w, x, y, z, isVel) => {
-      if (w.m3 === 'funnel') {
+      if (round(w)) {
         const [cr, sr, ct, st] = radial(w), dr = x * cr + z * sr, dt2 = x * ct + z * st;
         if (isVel) { w.fvr += dr; w.fL += w.frad * dt2; } else { w.frad = clamp(w.frad + dr, w.F.rs + 0.5, w.F.R - RW - 0.6); w.fth += dt2 / w.frad; }
       } else if (w.m3 === 'track') {
@@ -695,8 +785,10 @@ export function createCourse(g) {
       if (w.m3 === 'track') stepTrack(w, dt, racing);
       else if (w.m3 === 'air') stepAir(w, dt);
       else if (w.m3 === 'funnel') stepFunnel(w, dt);
+      else if (w.m3 === 'wheel') stepWheel(w, dt);
     }
     pairs(ws);
+    for (const w of ws) if (w.m3 === 'wheel') { frets(w, w.F); w.X = w.F.cx + Math.cos(w.fth) * w.frad; w.Z = w.F.cz + Math.sin(w.fth) * w.frad; w.Y = w.wy + RW; flat(w); }   // (not pushed into one by another ball)
     for (const w of ws) if (w.m3 === 'track') { place3(w); w.dist = pieces[w.pi].s0 + w.s; }
     if (racing) for (const w of ws) watch(w, dt);
   }
@@ -724,7 +816,7 @@ export function createCourse(g) {
   function boost(w) {
     if (w.m3 === 'track') w.vs = Math.min(VMAX, Math.max(w.vs, 0) + 80);
     else if (w.m3 === 'air') { w.vx *= 1.25; w.vz *= 1.25; }
-    else if (w.m3 === 'funnel') w.fL *= 1.3;
+    else if (w.m3 === 'funnel' || w.m3 === 'wheel') w.fL *= 1.3;
     emit(w.X, -w.Y, 12, ['#3ff8ff', '#1a5cff', '#fff'], 40, 40, 100, undefined, w.Z);
   }
   function open() { pieces[0].gate.on = false; K.doorsOpen = true; K.openT = t; }

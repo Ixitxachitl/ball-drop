@@ -353,56 +353,72 @@ export function create(g) {
       const rim = mesh(new THREE.TorusGeometry(F.R + 0.3, 0.6, 8, 64).rotateX(Math.PI / 2), BRASS); rim.position.set(F.cx, F.cy + 1.6, F.cz); world.add(rim);
       const spout = mesh(new THREE.TorusGeometry(F.rs + 0.6, 0.7, 6, 24).rotateX(Math.PI / 2), BRASS); spout.position.set(F.cx, F.cy - F.H, F.cz); world.add(spout);
     }
-    // Roulette wheels: a wooden bowl with a brass rim, its ball track sloping down to the wheel, which turns:
-    // red, black and green pockets between brass frets, the numbers round its edge, and a cone in the
-    // middle with a brass turret on top. Each pocket has a trap door in the bottom, which swings open to drop
-    // its ball into a glass funnel under the wheel.
-    const WOOD = lam('#6a3018'), TRACKWOOD = shiny('#c8955a', { side: THREE.DoubleSide });
+    // Roulette wheels, the same shape the balls roll on (see course3d.js's wheelH): a wooden bowl with a brass
+    // rim, its ball track sloping down to the wheel, which turns. On the wheel, the number ring slopes down
+    // to the pockets, and the cone in the middle rises from them; the brass frets between the pockets run
+    // through like spokes, and each pocket's floor is a pair of trap doors, hinged on the frets either side,
+    // that swing down to let a ball through into the glass funnel hanging under the wheel.
+    const WOOD = lam('#6a3018', { side: THREE.DoubleSide }), TRACKWOOD = shiny('#c8955a', { side: THREE.DoubleSide });
+    const NUMS = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+    const REDS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36], SLOT = TAU / 37, HUB = 0.18, FRET = 0.2;
+    const colOf = n => n === 0 ? ['#1f9a4a', '#16753a'] : REDS.includes(n) ? ['#d0203a', '#9c1428'] : ['#1f1a26', '#2a2232'];
+    const V2 = (x, y) => new THREE.Vector2(x, y);
+    // (a rod from a to b)
+    const rod = (a, b, r, mat) => { const d = b.clone().sub(a), m = mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), mat); m.position.copy(a).add(b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); return m; };
     for (const F of K.wheels) {
-      const yr = F.yR - F.cy, base = new THREE.Group(); base.position.set(F.cx, F.cy, F.cz); world.add(base);
-      base.add(mesh(new THREE.LatheGeometry([new THREE.Vector2(F.Rr, -F.k * (F.R - F.Rr)), new THREE.Vector2(F.R, 0)], 96), TRACKWOOD));
-      base.add(mesh(new THREE.LatheGeometry([new THREE.Vector2(F.Rr - 0.5, yr - 3), new THREE.Vector2(F.R + 5, -6), new THREE.Vector2(F.R + 4, 2.5), new THREE.Vector2(F.R, 2.5), new THREE.Vector2(F.R, 0)], 96), lam('#6a3018', { side: THREE.DoubleSide })));
-      base.add(mesh(new THREE.TorusGeometry(F.R + 2, 0.8, 8, 96).rotateX(Math.PI / 2).translate(0, 2.6, 0), BRASS));
-      {
-        const U = F.under, pts = [];
-        for (let i = 0; i <= 40; i++) { const r = U.rs * Math.pow(U.R / U.rs, i / 40); pts.push(new THREE.Vector2(r, -U.Kf * (U.R / r - 1))); }
-        const f = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), FUNNEL_GLASS); f.position.set(U.cx, U.cy, U.cz); f.renderOrder = 2; world.add(f);
-        const rim = mesh(new THREE.TorusGeometry(U.R + 0.3, 0.6, 8, 64).rotateX(Math.PI / 2), BRASS); rim.position.set(U.cx, U.cy, U.cz); world.add(rim);
-        const spout = mesh(new THREE.TorusGeometry(U.rs + 0.6, 0.7, 6, 24).rotateX(Math.PI / 2), BRASS); spout.position.set(U.cx, U.cy - U.H, U.cz); world.add(spout);
-        // (and brass struts holding it to the wheel's bowl)
-        for (let i = 0; i < 4; i++) { const a = i / 4 * TAU + 0.4, s = mesh(new THREE.CylinderGeometry(0.5, 0.5, F.Rr - U.R + 2, 8).rotateZ(Math.PI / 2).translate((F.Rr + U.R) / 2, U.cy - F.cy, 0).rotateY(a), BRASS); base.add(s); }
+      const base = new THREE.Group(); base.position.set(F.cx, F.cy, F.cz); world.add(base);
+      const yT = F.yT - F.cy, y0 = F.y0 - F.cy;
+      base.add(mesh(new THREE.LatheGeometry([V2(F.Rr + 0.3, yT + F.k * 0.3), V2(F.R, 0)], 128), TRACKWOOD));
+      base.add(mesh(new THREE.LatheGeometry([V2(F.Rr + 0.3, yT + F.k * 0.3), V2(F.Rr + 0.3, y0 - 2.6), V2(F.R + 5, -6), V2(F.R + 4, 2.5), V2(F.R, 2.5), V2(F.R, 0)], 128), WOOD));
+      base.add(mesh(new THREE.TorusGeometry(F.R + 2, 0.8, 8, 128).rotateX(Math.PI / 2).translate(0, 2.6, 0), BRASS));
+      // the funnel underneath, and brass rods holding it to the bowl
+      const U = F.under, pts = [];
+      for (let i = 0; i <= 40; i++) { const r = U.rs * Math.pow(U.R / U.rs, i / 40); pts.push(V2(r, -U.Kf * (U.R / r - 1))); }
+      const fun = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), FUNNEL_GLASS); fun.position.set(U.cx, U.cy, U.cz); fun.renderOrder = 2; world.add(fun);
+      const rim = mesh(new THREE.TorusGeometry(U.R + 0.3, 0.6, 8, 64).rotateX(Math.PI / 2), BRASS); rim.position.set(U.cx, U.cy, U.cz); world.add(rim);
+      const spout = mesh(new THREE.TorusGeometry(U.rs + 0.6, 0.7, 6, 24).rotateX(Math.PI / 2), BRASS); spout.position.set(U.cx, U.cy - U.H, U.cz); world.add(spout);
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * TAU + 0.3, c = Math.cos(a), sn = Math.sin(a), rb = F.Rr + 3, yb = y0 - 2.6 + (-6 - (y0 - 2.6)) * (rb - F.Rr - 0.3) / (F.R + 4.7 - F.Rr);
+        base.add(rod(new THREE.Vector3(c * (U.R + 0.3), U.cy - F.cy, sn * (U.R + 0.3)), new THREE.Vector3(c * rb, yb, sn * rb), 0.5, BRASS));
       }
-      // the wheel, its top painted on one round texture (canvas x and y are the world's x and z)
-      const wheelTex = canvasTex(1024, 1024, (x) => {
-        const S = 512 / F.Rr, c = 512, NUMS = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
-        const REDS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36], slot = TAU / 37;
+      // the wheel: the number ring (painted on a round texture: canvas x and y are the world's x and z)
+      const rotor = new THREE.Group(); rotor.position.set(F.cx, F.y0, F.cz); world.add(rotor);
+      const ringTex = canvasTex(1024, 1024, (x) => {
+        const S = 512 / F.Rr, c = 512;
         x.fillStyle = '#4a2010'; x.fillRect(0, 0, 1024, 1024);
         NUMS.forEach((n, i) => {
-          const a0 = (i - 0.5) * slot, a1 = (i + 0.5) * slot, col = n === 0 ? ['#1f9a4a', '#16753a'] : REDS.includes(n) ? ['#d0203a', '#9c1428'] : ['#1f1a26', '#2a2232'];
-          for (const [r0, r1, cc] of [[F.Rh, F.Rr * 0.9, col[1]], [F.Rr * 0.9, F.Rr, col[0]]]) { x.fillStyle = cc; x.beginPath(); x.arc(c, c, r1 * S, a0, a1); x.arc(c, c, r0 * S, a1, a0, true); x.fill(); }
-          x.save(); x.translate(c + Math.cos(i * slot) * F.Rr * 0.95 * S, c + Math.sin(i * slot) * F.Rr * 0.95 * S); x.rotate(i * slot + Math.PI / 2);
-          x.fillStyle = '#fffaf0'; x.font = 'bold 26px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(n), 0, 0); x.restore();
+          x.fillStyle = colOf(n)[0]; x.beginPath(); x.arc(c, c, F.Rr * S, (i - 0.5) * SLOT, (i + 0.5) * SLOT); x.arc(c, c, F.Rpo * S, (i + 0.5) * SLOT, (i - 0.5) * SLOT, true); x.fill();
+          x.save(); x.translate(c + Math.cos(i * SLOT) * (F.Rpo + F.Rr) / 2 * S, c + Math.sin(i * SLOT) * (F.Rpo + F.Rr) / 2 * S); x.rotate(i * SLOT + Math.PI / 2);
+          x.fillStyle = '#fffaf0'; x.font = 'bold 30px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(n), 0, 0); x.restore();
         });
-        x.strokeStyle = '#e8b84a'; x.lineWidth = 4; for (const r of [F.Rh, F.Rr * 0.9]) { x.beginPath(); x.arc(c, c, r * S, 0, TAU); x.stroke(); }
+        x.strokeStyle = '#e8b84a'; x.lineWidth = 4; for (const r of [F.Rpo, F.Rr - 0.4]) { x.beginPath(); x.arc(c, c, r * S, 0, TAU); x.stroke(); }
       }, true);
-      const rotor = new THREE.Group(); rotor.position.set(F.cx, F.yR, F.cz); world.add(rotor);
-      rotor.add(mesh(new THREE.CylinderGeometry(F.Rr, F.Rr, 2, 96).translate(0, -1.02, 0), WOOD), mesh(new THREE.CircleGeometry(F.Rr, 96).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: wheelTex })));
-      rotor.add(mesh(mergeGeometries(Array.from({ length: 37 }, (_, i) => new THREE.BoxGeometry(F.Rr * 0.9 - F.Rh, 1.4, 0.35).translate((F.Rh + F.Rr * 0.9) / 2, 0.7, 0).rotateY(-(i + 0.5) * TAU / 37))), BRASS));
-      rotor.add(mesh(new THREE.ConeGeometry(F.Rh, 7, 48).translate(0, 3.5, 0), WOOD));
-      rotor.add(mesh(new THREE.CylinderGeometry(1.2, 1.6, 6, 12).translate(0, 9, 0), BRASS));
-      for (let i = 0; i < 4; i++) rotor.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 9, 8).rotateZ(Math.PI / 2).translate(4.5, 10.5, 0).rotateY(i * Math.PI / 2), BRASS), mesh(new THREE.SphereGeometry(1, 10, 8).translate(9, 10.5, 0).rotateY(i * Math.PI / 2), BRASS));
-      // the trap doors: one in the bottom of each pocket, the pocket's color, hinged at its inner end, over a
-      // dark hole that shows when it's open
-      const doors = [], len = F.Rr * 0.9 - F.Rh - 0.8, wid = TAU * (F.Rh + len / 2) / 37 - 0.6;
-      const NUMS = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
-      const REDS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
-      for (let i = 0; i < 37; i++) {
-        const n = NUMS[i], grp = new THREE.Group(), pivot = new THREE.Group();
-        grp.rotation.y = -i * TAU / 37; rotor.add(grp);
-        grp.add(mesh(new THREE.BoxGeometry(len, 0.05, wid).translate(F.Rh + 0.4 + len / 2, 0.03, 0), lam('#050308'), false));
-        pivot.position.set(F.Rh + 0.4, 0.08, 0); grp.add(pivot);
-        pivot.add(mesh(new THREE.BoxGeometry(len, 0.25, wid).translate(len / 2, 0.12, 0), [lam('#6a4a20'), lam('#6a4a20'), lam(n === 0 ? '#16753a' : REDS.includes(n) ? '#9c1428' : '#2a2232'), lam('#3a2a10'), lam('#6a4a20'), lam('#6a4a20')]));
-        doors.push(pivot);
+      const ringGeo = new THREE.LatheGeometry([V2(F.Rpo, 0), V2(F.Rr, F.yT - F.y0)], 148), uv = ringGeo.attributes.uv, pos = ringGeo.attributes.position;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, (pos.getX(i) / F.Rr + 1) / 2, (1 - pos.getZ(i) / F.Rr) / 2);   // (flat from above, like the canvas)
+      rotor.add(mesh(ringGeo, new THREE.MeshLambertMaterial({ map: ringTex, side: THREE.DoubleSide })));
+      rotor.add(mesh(new THREE.LatheGeometry([V2(F.Rr, F.yT - F.y0), V2(F.Rr, -2), V2(F.Rpo, -2), V2(F.Rpo, 0)], 148), WOOD));   // (its sides and underneath)
+      // the cone in the middle, and the turret on top
+      const hubTop = HUB * F.Rh;
+      rotor.add(mesh(new THREE.LatheGeometry([V2(0.01, hubTop), V2(F.Rh, 0), V2(F.Rh, -2), V2(0.01, -2)], 96), WOOD));
+      rotor.add(mesh(new THREE.CylinderGeometry(1.2, 1.6, 6, 12).translate(0, hubTop + 2.5, 0), BRASS));
+      for (let i = 0; i < 4; i++) rotor.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 9, 8).rotateZ(Math.PI / 2).translate(4.5, hubTop + 4, 0).rotateY(i * Math.PI / 2), BRASS), mesh(new THREE.SphereGeometry(1, 10, 8).translate(9, hubTop + 4, 0).rotateY(i * Math.PI / 2), BRASS));
+      // the frets, from the cone out into the number ring and from the bottom of the wheel up past the floor
+      rotor.add(mesh(mergeGeometries(Array.from({ length: 37 }, (_, i) => new THREE.BoxGeometry(F.Rpo - F.Rh + 2.8, 3.8, 2 * FRET).translate((F.Rh + F.Rpo) / 2, -0.1, 0).rotateY(-(i + 0.5) * SLOT))), BRASS));
+      // the trap doors: each pocket's floor is two, hinged on the frets either side and meeting in the middle
+      const leaf = sd => {
+        const sh = new THREE.Shape([V2(F.Rh + 0.05, 0), V2(F.Rpo - 0.05, 0), V2(F.Rpo - 0.05, sd * (F.Rpo * Math.sin(SLOT / 2) - FRET - 0.05)), V2(F.Rh + 0.05, sd * (F.Rh * Math.sin(SLOT / 2) - FRET - 0.05))]);
+        return new THREE.ExtrudeGeometry(sh, { depth: 0.25, bevelEnabled: false }).rotateX(Math.PI / 2);   // (across is +z or -z, its top at the floor)
+      };
+      const leafGeo = [leaf(-1), leaf(1)], doors = [];
+      for (let j = 0; j < 37; j++) {
+        const fret = new THREE.Group(); fret.rotation.y = -(j + 0.5) * SLOT; rotor.add(fret);
+        // (on this fret: pocket j's door on one side, pocket j + 1's on the other)
+        for (const [sd, p] of [[-1, j], [1, (j + 1) % 37]]) {
+          const pivot = new THREE.Group(); pivot.position.z = sd * FRET; fret.add(pivot);
+          const col = lam(colOf(NUMS[p])[1]);
+          pivot.add(mesh(leafGeo[sd < 0 ? 0 : 1], [col, lam('#6a4a20')]));
+          doors.push({ pivot, p, sd });
+        }
       }
       D.wheels.push({ F, rotor, doors });
     }
@@ -631,8 +647,7 @@ export function create(g) {
     for (const { m, sp, ph } of D.cogs) m.rotation.z = ph + t * sp;
     for (const { F, rotor, doors } of D.wheels) {
       rotor.rotation.y = -F.rot;   // (three's y turn goes the other way round)
-      // a trap door: quickly open, held a moment, then swinging shut
-      doors.forEach((d, i) => { const e = ct - (F.doors[i] ?? -9), a = e < 0 ? 0 : e < 0.15 ? e / 0.15 : e < 0.9 ? 1 : e < 1.3 ? 1 - (e - 0.9) / 0.4 : 0; d.rotation.z = -a * 1.9; });
+      for (const { pivot, p, sd } of doors) pivot.rotation.x = sd * F.dopen[p] * Math.PI / 2;   // (swinging down on its hinge)
     }
     for (const { o, body } of D.moles) { body.visible = o.up > 0.01; body.scale.y = Math.max(0.01, o.up); }   // (popping up out of its hole)   // (three's y turn goes the other way round)
     for (const { S, reels, lever, bulbs } of D.slots) {
