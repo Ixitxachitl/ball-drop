@@ -152,6 +152,17 @@ export function create(g) {
       const s0 = i * p.ds * su, s1 = (i + 1) * p.ds * su, uvq = [[s0, 0], [s1, 0], [s1, 1], [s0, 1]];
       for (const o of order) { pos.push(...q[o]); uv.push(...uvq[o]); }
     }
+    // a closed one is capped at both ends, facing back and on along the track (so it's solid seen end-on)
+    if (closed) for (const [i, dir] of [[a, -1], [b, 1]]) {
+      const j = i * 3, c = [p.P[j] + p.B[j] * cu + p.N[j] * ch, p.P[j + 1] + p.B[j + 1] * cu + p.N[j + 1] * ch, p.P[j + 2] + p.B[j + 2] * cu + p.N[j + 2] * ch];
+      for (let k = 0; k < profile.length; k++) {
+        let q1 = pt(i, k), q2 = pt(i, k + 1);
+        const e1 = q1.map((v, n) => v - c[n]), e2 = q2.map((v, n) => v - c[n]);
+        const nT = (e1[1] * e2[2] - e1[2] * e2[1]) * p.T[j] + (e1[2] * e2[0] - e1[0] * e2[2]) * p.T[j + 1] + (e1[0] * e2[1] - e1[1] * e2[0]) * p.T[j + 2];
+        if (nT * dir < 0) [q1, q2] = [q2, q1];
+        pos.push(...c, ...q1, ...q2); uv.push(i * p.ds * su, 0.5, i * p.ds * su, 0, i * p.ds * su, 1);
+      }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
