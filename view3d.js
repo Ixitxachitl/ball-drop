@@ -66,11 +66,14 @@ export function create(g) {
   const glowing = color => { const k = 'b' + color; let m = mats.get(k); if (!m) mats.set(k, m = new THREE.MeshBasicMaterial({ color })); return m; };
   const STEEL = shiny('#d8d8e8'), IRON = lam('#3a3450'), IRON2 = lam('#5a5470'), DARK = lam('#2a2236'), BRASS = shiny('#e8b84a');
   const GLASS = new THREE.MeshPhongMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide, shininess: 120, specular: 0xffffff });
-  const checker = rowsTex([['#fffaf0', '#1f1830'], ['#1f1830', '#fffaf0']]);
+  const FUNNEL_GLASS = new THREE.MeshPhongMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide, shininess: 140, specular: 0xffffff });
+  const RING = new THREE.MeshBasicMaterial({ color: 0xe0f6ff, transparent: true, opacity: 0.35, depthWrite: false });
+  const CHECKS = 12, checker = rowsTex(Array.from({ length: CHECKS }, (_, j) => [0, 1].map(i => (i + j) % 2 ? '#1f1830' : '#fffaf0')));
   const boostTex = canvasTex(12, 4, (x) => { for (let i = 0; i < 12; i++) for (let j = 0; j < 4; j++) { x.fillStyle = ((i + j) % 6) < 3 ? C.boostA : C.boostB; x.fillRect(i, j, 1, 1); } });
   const beltTex = rowsTex([['#e8e6f4', '#e8e6f4', '#3a2c40', '#3a2c40']]);
   const plankTex = rowsTex([['#8a5a3a', '#8a5a3a', '#8a5a3a', '#6a4028']]);
   const BOOST = new THREE.MeshBasicMaterial({ map: boostTex }), BELT = new THREE.MeshLambertMaterial({ map: beltTex });
+  const FELT = lam('#1f7a4a');
   const CHECKER = new THREE.MeshLambertMaterial({ map: checker }), PLANKS = new THREE.MeshLambertMaterial({ map: plankTex });
   const dieMats = (() => {
     const face = n => new THREE.MeshLambertMaterial({ map: canvasTex(7, 7, (x) => { x.fillStyle = '#fffaf0'; x.fillRect(0, 0, 7, 7); x.drawImage(g.dieArt(n), 0, 0); }) });
@@ -163,7 +166,7 @@ export function create(g) {
   function rebuild() {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
-    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], gate: null, solid: [] };
+    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], gate: null, solid: [] };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     const add = (geo, mat) => { let l = lists.get(mat); if (!l) lists.set(mat, l = []); l.push(geo); };
 
@@ -195,11 +198,21 @@ export function create(g) {
       // boost pads and conveyors, laid on top; their textures scroll
       for (const r of p.regions) {
         const a = Math.floor(r.a / p.ds), b = Math.min(p.n - 1, Math.ceil(r.b / p.ds)), u0 = r.u0 ?? -HW, u1 = r.u1 ?? HW;
-        add(sweep(p, rect(u0 + 1, u1 - 1, 0.02, 0.32), true, a, b, r.belt ? 0.25 : 1 / 12), r.belt ? BELT : BOOST);
+        add(sweep(p, rect(Math.max(u0, -K.RAIL) + (u0 > -HW ? 0.8 : 0.2), Math.min(u1, K.RAIL) - (u1 < HW ? 0.8 : 0.2), 0.02, 0.32), true, a, b, r.belt ? 0.25 : 1 / 12), r.belt ? BELT : BOOST);
       }
       // the start and finish lines
-      if (p.kind === 'start') add(sweep(p, rect(-HW + 1, HW - 1, 0.02, 0.3), true, Math.floor(118 / p.ds), Math.floor(124 / p.ds), 0.5), CHECKER);
-      if (p.kind === 'goal') add(sweep(p, rect(-HW + 1, HW - 1, 0.02, 0.3), true, Math.floor((K.finishS - 3) / p.ds), Math.ceil((K.finishS + 3) / p.ds), 0.5), CHECKER);
+      // the start and finish lines: checkerboards right across the track (squares as long as they're wide)
+      const sq = 1 / (2 * (2 * K.RAIL - 0.4) / CHECKS);
+      if (p.kind === 'start') add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.3), true, Math.floor(110 / p.ds), Math.floor(124 / p.ds), sq), CHECKER);
+      // the ends of the course: a wall across the back of the starting pen and the end of the last
+      // platform, and green felt in the tray where the finished balls collect
+      if (p.kind === 'start' || p.kind === 'goal') {
+        const cap = onTrack(new THREE.Group(), p, p.kind === 'start' ? 0 : p.len, 0, 0);
+        cap.add(mesh(new THREE.BoxGeometry(2.4, 6, K.W).translate(p.kind === 'start' ? -1.2 : 1.2, 1.5, 0), lam(C.dark)));
+        world.add(cap);
+      }
+      if (p.kind === 'goal') add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.25), true, Math.ceil((K.finishS + 8) / p.ds), p.n - 1, 0.1), FELT);
+      if (p.kind === 'goal') add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.3), true, Math.floor((K.finishS - 8) / p.ds), Math.ceil((K.finishS + 8) / p.ds), sq), CHECKER);
       // columns down to the ground (not where they'd go through track below)
       if (p.kind !== 'loop') for (let s = 20; s < p.len - 10; s += 55) {
         const f = frameAt(p, s), x = f.P[0] - f.N[0] * 7, y = f.P[1] - f.N[1] * 7, z = f.P[2] - f.N[2] * 7;
@@ -226,7 +239,7 @@ export function create(g) {
     for (const p of K.pieces) {
       for (const o of p.obs) {
         if (o.kind === 'pin') { world.add(onTrack(mesh(pinGeo, STEEL), p, o.s, o.u), onTrack(mesh(capGeo, BRASS), p, o.s, o.u)); }
-        else if (o.kind === 'die') { const d = onTrack(mesh(new THREE.BoxGeometry(7, 7, 7).translate(0, 3.5, 0), dieMats), p, o.s, o.u); d.rotateY(rnd(0, TAU)); world.add(d); }
+        else if (o.kind === 'die') { const e = o.r * Math.SQRT2, d = onTrack(mesh(new THREE.BoxGeometry(e, e, e).translate(0, e / 2, 0), dieMats), p, o.s, o.u); d.rotateY(rnd(0, TAU)); world.add(d); }   // (its corners reach just as far as balls bounce off it)
         else if (o.kind === 'chip') for (let i = 0; i < (o.h || 3); i++) world.add(onTrack(mesh(new THREE.CylinderGeometry(3.8, 3.8, 1.9, 20).translate(0, 1 + i * 2, 0), chipMat(g.CHIP_COLS[(i + Math.round(o.s)) % g.CHIP_COLS.length])), p, o.s, o.u));
         else if (o.kind === 'bumper') {
           const m = onTrack(mesh(new THREE.CylinderGeometry(o.r, o.r, 6, 24).translate(0, 3, 0), BUMP[0]), p, o.s, o.u);
@@ -243,11 +256,11 @@ export function create(g) {
         m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(dir, up, side));
         m.position.copy(A).add(Bv).multiplyScalar(0.5).addScaledVector(up, h / 2);
         world.add(m);
-        if (sg.sling) { const top = mesh(new THREE.BoxGeometry(len, 0.6, 2.6), lam('#ffe600')); top.quaternion.copy(m.quaternion); top.position.copy(m.position).addScaledVector(up, h / 2 + 0.3); world.add(top); }
+        if (sg.sling || sg.deflector) { const top = mesh(new THREE.BoxGeometry(len, 0.6, 2.6), lam(sg.sling ? '#ffe600' : '#fffaf0')); top.quaternion.copy(m.quaternion); top.position.copy(m.position).addScaledVector(up, h / 2 + 0.3); world.add(top); }
       }
       if (p.gate) {
         const gate = onTrack(new THREE.Group(), p, p.gate.as, 0, 0);
-        gate.add(mesh(new THREE.BoxGeometry(2, 5, K.W).translate(0, 2.5, 0), lam('#ff3b5c')));
+        gate.add(mesh(new THREE.BoxGeometry(2, 5, K.RAIL * 2).translate(0, 2.5, 0), lam("#ff3b5c")));
         for (const sd of [-1, 1]) gate.add(mesh(new THREE.BoxGeometry(2.4, 12, 2.4).translate(0, 6, sd * (HW + 1.2)), IRON));
         world.add(gate); D.gate = gate;
       }
@@ -259,7 +272,7 @@ export function create(g) {
         base.add(pivot); world.add(base); D.flippers.push({ F, pivot });
       }
       for (const Dm of p.doms) {
-        const pieces = Dm.ds.map(s => { const hinge = onTrack(new THREE.Group(), p, s, Dm.side * (K.HW - 2.5)), tip = new THREE.Group(); tip.add(mesh(domGeo, domMat)); hinge.add(tip); world.add(hinge); return tip; });
+        const pieces = Dm.ds.map(s => { const hinge = onTrack(new THREE.Group(), p, s, Dm.side * K.EDGE), tip = new THREE.Group(); tip.add(mesh(domGeo, domMat())); hinge.add(tip); world.add(hinge); return tip; });
         D.doms.push({ Dm, pieces });
       }
       for (const c of p.cones) { const grp = onTrack(new THREE.Group(), p, c.s, c.u), inner = new THREE.Group(); inner.add(mesh(coneGeo, coneMat), mesh(new THREE.BoxGeometry(5, 0.8, 5).translate(0, 0.4, 0), DARK)); grp.add(inner); world.add(grp); D.cones.push({ c, inner }); }
@@ -271,13 +284,50 @@ export function create(g) {
         world.add(lamp);
       }
     }
-    // the funnels: glass bowls with brass rims
-    for (const p of K.pieces) if (p.fun) {
+    // the funnels: big glass coin funnels, the same shape the balls roll round (see course3d.js's bowlY),
+    // with a raised lip and a brass rim, and a brass collar at the spout
+    for (const p of K.pieces) if (p.fun && !p.fun.wheel) {
       const F = p.fun, pts = [];
-      for (let i = 0; i <= 14; i++) { const k = i / 14; pts.push(new THREE.Vector2(F.R * (1 - k) + 1.6 * k + 0.6, -F.H * k)); }
-      const f = new THREE.Mesh(new THREE.LatheGeometry(pts, 40), GLASS); f.position.set(F.cx, F.cy, F.cz); f.renderOrder = 2; world.add(f);
-      const rim = mesh(new THREE.TorusGeometry(F.R + 0.6, 0.7, 8, 40).rotateX(Math.PI / 2), BRASS); rim.position.set(F.cx, F.cy, F.cz); world.add(rim);
-      const spout = mesh(new THREE.TorusGeometry(2.4, 0.6, 6, 16).rotateX(Math.PI / 2), BRASS); spout.position.set(F.cx, F.cy - F.H, F.cz); world.add(spout);
+      for (let i = 0; i <= 48; i++) { const r = F.rs * Math.pow(F.R / F.rs, i / 48); pts.push(new THREE.Vector2(r, -F.Kf * (F.R / r - 1))); }
+      pts.push(new THREE.Vector2(F.R, 1.6));
+      const f = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), FUNNEL_GLASS); f.position.set(F.cx, F.cy, F.cz); f.renderOrder = 2; world.add(f);
+      for (const r of [F.R * 0.35, F.R * 0.6, F.R * 0.85]) {   // (faint rings so you can see the shape)
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.18, 4, 64).rotateX(Math.PI / 2), RING); ring.position.set(F.cx, F.cy - F.Kf * (F.R / r - 1) + 0.1, F.cz); world.add(ring);
+      }
+      const rim = mesh(new THREE.TorusGeometry(F.R + 0.3, 0.6, 8, 64).rotateX(Math.PI / 2), BRASS); rim.position.set(F.cx, F.cy + 1.6, F.cz); world.add(rim);
+      const spout = mesh(new THREE.TorusGeometry(F.rs + 0.6, 0.7, 6, 24).rotateX(Math.PI / 2), BRASS); spout.position.set(F.cx, F.cy - F.H, F.cz); world.add(spout);
+    }
+    // Roulette wheels: a wooden bowl with a brass rim, its ball track sloping down to the wheel, which turns:
+    // red, black and green pockets between brass frets, the numbers round its edge, and a cone in the
+    // middle with a brass turret on top. Under it, a stand down to a chute the balls drop out of.
+    const WOOD = lam('#6a3018'), TRACKWOOD = shiny('#c8955a', { side: THREE.DoubleSide });
+    for (const F of K.wheels) {
+      const yr = F.yR - F.cy, base = new THREE.Group(); base.position.set(F.cx, F.cy, F.cz); world.add(base);
+      base.add(mesh(new THREE.LatheGeometry([new THREE.Vector2(F.Rr, -F.k * (F.R - F.Rr)), new THREE.Vector2(F.R, 0)], 96), TRACKWOOD));
+      base.add(mesh(new THREE.LatheGeometry([new THREE.Vector2(F.Rr - 0.5, yr - 3), new THREE.Vector2(F.R + 5, -6), new THREE.Vector2(F.R + 4, 2.5), new THREE.Vector2(F.R, 2.5), new THREE.Vector2(F.R, 0)], 96), lam('#6a3018', { side: THREE.DoubleSide })));
+      base.add(mesh(new THREE.TorusGeometry(F.R + 2, 0.8, 8, 96).rotateX(Math.PI / 2).translate(0, 2.6, 0), BRASS));
+      base.add(mesh(new THREE.CylinderGeometry(F.Rh * 0.55, 3.5, F.H + yr - 3, 24).translate(0, (yr - 3 - F.H) / 2, 0), WOOD));
+      base.add(mesh(new THREE.TorusGeometry(F.rs - RW + 1.5, 0.8, 6, 24).rotateX(Math.PI / 2).translate(0, -F.H, 0), BRASS));
+      // the wheel, its top painted on one round texture (canvas x and y are the world's x and z)
+      const wheelTex = canvasTex(1024, 1024, (x) => {
+        const S = 512 / F.Rr, c = 512, NUMS = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+        const REDS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36], slot = TAU / 37;
+        x.fillStyle = '#4a2010'; x.fillRect(0, 0, 1024, 1024);
+        NUMS.forEach((n, i) => {
+          const a0 = (i - 0.5) * slot, a1 = (i + 0.5) * slot, col = n === 0 ? ['#1f9a4a', '#16753a'] : REDS.includes(n) ? ['#d0203a', '#9c1428'] : ['#1f1a26', '#120e18'];
+          for (const [r0, r1, cc] of [[F.Rh, F.Rr * 0.9, col[1]], [F.Rr * 0.9, F.Rr, col[0]]]) { x.fillStyle = cc; x.beginPath(); x.arc(c, c, r1 * S, a0, a1); x.arc(c, c, r0 * S, a1, a0, true); x.fill(); }
+          x.save(); x.translate(c + Math.cos(i * slot) * F.Rr * 0.95 * S, c + Math.sin(i * slot) * F.Rr * 0.95 * S); x.rotate(i * slot + Math.PI / 2);
+          x.fillStyle = '#fffaf0'; x.font = 'bold 26px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(n), 0, 0); x.restore();
+        });
+        x.strokeStyle = '#e8b84a'; x.lineWidth = 4; for (const r of [F.Rh, F.Rr * 0.9]) { x.beginPath(); x.arc(c, c, r * S, 0, TAU); x.stroke(); }
+      }, true);
+      const rotor = new THREE.Group(); rotor.position.set(F.cx, F.yR, F.cz); world.add(rotor);
+      rotor.add(mesh(new THREE.CylinderGeometry(F.Rr, F.Rr, 2, 96).translate(0, -1.02, 0), WOOD), mesh(new THREE.CircleGeometry(F.Rr, 96).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: wheelTex })));
+      rotor.add(mesh(mergeGeometries(Array.from({ length: 37 }, (_, i) => new THREE.BoxGeometry(F.Rr * 0.9 - F.Rh, 1.4, 0.35).translate((F.Rh + F.Rr * 0.9) / 2, 0.7, 0).rotateY(-(i + 0.5) * TAU / 37))), BRASS));
+      rotor.add(mesh(new THREE.ConeGeometry(F.Rh, 7, 48).translate(0, 3.5, 0), WOOD));
+      rotor.add(mesh(new THREE.CylinderGeometry(1.2, 1.6, 6, 12).translate(0, 9, 0), BRASS));
+      for (let i = 0; i < 4; i++) rotor.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 9, 8).rotateZ(Math.PI / 2).translate(4.5, 10.5, 0).rotateY(i * Math.PI / 2), BRASS), mesh(new THREE.SphereGeometry(1, 10, 8).translate(9, 10.5, 0).rotateY(i * Math.PI / 2), BRASS));
+      D.wheels.push({ F, rotor });
     }
     // the finish arch
     {
@@ -293,28 +343,37 @@ export function create(g) {
       arch.add(mesh(new THREE.BoxGeometry(2, 8, K.W + 6).translate(0, 30, 0), [bm, bm, DARK, DARK, DARK, DARK]));
       world.add(arch);
     }
-    // slot machines beside the track, facing it, with reels that spin and a lever that pulls
+    // Slot machines beside the track, facing it. A ball rolling past pulls the lever; the three reels (drums
+    // with the symbols painted round them, seen through a window) spin and stop one after another on what
+    // came up, the bulbs chase, and on 7-7-7 it pays out and the ball that pulled it gets a boost.
     for (const S of K.slots) {
       const cab = beside(new THREE.Group(), S.p, S.s, S.side * (HW + 16));
       cab.add(mesh(new THREE.BoxGeometry(31, 20, 12).translate(0, 10, 0), lam('#c4203e')));
-      cab.add(mesh(new THREE.BoxGeometry(25, 8, 10).translate(0, 24, 0), [lam('#e8a020'), lam('#e8a020'), lam('#ffd84a'), lam('#e8a020'), new THREE.MeshBasicMaterial({ map: sevens }), lam('#e8a020')]));
-      cab.add(mesh(new THREE.BoxGeometry(25, 9, 1).translate(0, 13.5, 6), DARK));
+      cab.add(mesh(new THREE.BoxGeometry(25, 9, 10).translate(0, 24.5, 0), [lam('#e8a020'), lam('#e8a020'), lam('#ffd84a'), lam('#e8a020'), new THREE.MeshBasicMaterial({ map: sevens }), lam('#e8a020')]));
+      // the window: a dark frame round the reels, a payline across it, and the coin tray under it
+      for (const [w, h, x, y] of [[25, 1.4, 0, 18.7], [25, 1.4, 0, 8.3], [1.4, 11.8, -12.3, 13.5], [1.4, 11.8, 12.3, 13.5]]) cab.add(mesh(new THREE.BoxGeometry(w, h, 1.4).translate(x, y, 6.3), DARK));
+      cab.add(mesh(new THREE.BoxGeometry(23, 0.3, 0.3).translate(0, 13.5, 8.2), glowing('#ff3b5c'), false));
+      cab.add(mesh(new THREE.BoxGeometry(17, 2.5, 4).translate(0, 4, 7), DARK), mesh(new THREE.BoxGeometry(17, 0.6, 4.4).translate(0, 2.6, 7.2), STEEL));
       const reels = [-8, 0, 8].map(rx => {
-        cab.add(mesh(new THREE.CylinderGeometry(4, 4, 7, 16).rotateZ(Math.PI / 2).translate(rx, 13.5, 4.5), lam('#fffaf0'), false));
-        const face = new THREE.Mesh(new THREE.PlaneGeometry(6, 7), new THREE.MeshBasicMaterial({ map: symTex[0], transparent: true })); face.position.set(rx, 13.5, 8.6); cab.add(face);
-        return face;
+        const drum = new THREE.Group(); drum.position.set(rx, 13.5, 2.5); cab.add(drum);
+        drum.add(mesh(new THREE.CylinderGeometry(4.6, 4.6, 7, 32).rotateZ(Math.PI / 2), [new THREE.MeshLambertMaterial({ map: reelTex }), STEEL, STEEL], false));
+        return { drum, a: symAngle(S.reels[rx / 8 + 1].s), was: false, from: 0, to: 0, k: 1 };
       });
-      const lever = new THREE.Group(); lever.position.set(17, 8, 0); cab.add(lever);
+      const lever = new THREE.Group(); lever.position.set(16.5, 12, 0); cab.add(lever);
       lever.add(mesh(new THREE.CylinderGeometry(0.5, 0.5, 12, 8).translate(0, 6, 0), STEEL), mesh(new THREE.SphereGeometry(1.8, 12, 8).translate(0, 12, 0), shiny('#ff3b5c')));
-      for (let i = 0; i < 12; i++) cab.add(mesh(new THREE.SphereGeometry(0.6, 6, 4).translate(-11 + i * 2, 28.3, 5), glowing('#fff3a8'), false));
-      world.add(cab); D.slots.push({ S, reels, lever });
+      cab.add(mesh(new THREE.CylinderGeometry(1.2, 1.2, 2, 10).rotateZ(Math.PI / 2).translate(16, 12, 0), STEEL));
+      const bulbs = [];
+      for (let i = 0; i < 12; i++) { const b = mesh(new THREE.SphereGeometry(0.6, 6, 4).translate(-11 + i * 2, 29.3, 5), BULB[0], false); cab.add(b); bulbs.push(b); }
+      for (let j = 0; j < 6; j++) for (const x of [-15.2, 15.2]) { const b = mesh(new THREE.SphereGeometry(0.55, 6, 4).translate(x, 3 + j * 3, 6), BULB[0], false); cab.add(b); bulbs.push(b); }
+      world.add(cab); D.slots.push({ S, reels, lever, bulbs });
     }
     // gears turning beside the track
     for (let k = 0; k < 10; k++) {
       const p = K.pieces[1 + Math.floor(Math.random() * (K.pieces.length - 2))];
       if (p.kind === 'loop') continue;
       const r = rnd(7, 16), teeth = Math.max(6, Math.round(r * 0.8)), col = ['#4a4660', '#5a4a3a', '#3a4a5a'][k % 3];
-      const holder = beside(new THREE.Group(), p, rnd(0, p.len), (Math.random() < 0.5 ? -1 : 1) * (HW + r + 8));
+      const holder = beside(new THREE.Group(), p, rnd(0, p.len), (Math.random() < 0.5 ? -1 : 1) * (HW + r + 8)), at = holder.position;
+      if (K.pieces.some(q => q.fun && Math.hypot(at.x - q.fun.cx, at.z - q.fun.cz) < q.fun.R + r + 8 && at.y > q.fun.cy - q.fun.H - 30 && at.y < q.fun.cy + 30)) continue;   // (not in a funnel or a roulette wheel)
       const gear = mesh(new THREE.ExtrudeGeometry(gearShape(r, teeth), { depth: 2.5, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3, bevelSegments: 1 }), lam(col), false);
       gear.position.y = rnd(-12, 10); holder.add(gear); world.add(holder);
       D.cogs.push({ m: gear, sp: rnd(0.3, 0.9) * (k & 1 ? 1 : -1), ph: rnd(0, TAU) });
@@ -345,10 +404,40 @@ export function create(g) {
     sun.shadow.camera.updateProjectionMatrix();
     if (!started) { started = true; const st = startView(); controls.target.copy(st.t); camera.position.copy(st.t).add(new THREE.Vector3(0, 0.55, 0.85).multiplyScalar(st.d)); }
   }
-  const domGeo = new THREE.BoxGeometry(1.6, 7, 4).translate(0.8, 3.5, 0), domMat = new THREE.MeshLambertMaterial({ map: rowsTex([0, 1, 2, 3, 4, 5, 6].map(j => [j === 1 || j === 3 || j === 5 ? '#1f1830' : '#fffaf0'])) });
+  // Dominoes: black tiles with a white line across the middle and white pips on each half, each a
+  // different one (the faces are on the tile's two big sides, which face along the track)
+  const domGeo = new THREE.BoxGeometry(1.4, 8, 4).translate(0.7, 4, 0), DOM_EDGE = shiny('#16121e');
+  const PIP_AT = { 0: [], 1: [[1, 1]], 2: [[0, 0], [2, 2]], 3: [[0, 0], [1, 1], [2, 2]], 4: [[0, 0], [2, 0], [0, 2], [2, 2]], 5: [[0, 0], [2, 0], [1, 1], [0, 2], [2, 2]], 6: [[0, 0], [2, 0], [0, 1], [2, 1], [0, 2], [2, 2]] };
+  const domTiles = Array.from({ length: 12 }, () => {
+    const top = Math.floor(Math.random() * 7), bottom = Math.floor(Math.random() * 7);
+    const face = new THREE.MeshPhongMaterial({ shininess: 80, specular: 0x333333, map: canvasTex(32, 64, (x) => {
+      x.fillStyle = '#16121e'; x.fillRect(0, 0, 32, 64);
+      x.fillStyle = '#e8e4f0'; x.fillRect(4, 31, 24, 2); x.beginPath(); x.arc(16, 32, 2.2, 0, TAU); x.fill();
+      for (const [n, y0] of [[top, 6], [bottom, 38]]) for (const [i, j] of PIP_AT[n]) { x.beginPath(); x.arc(8 + i * 8, y0 + 2 + j * 8, 2.8, 0, TAU); x.fill(); }
+    }, true) });
+    return [face, face, DOM_EDGE, DOM_EDGE, DOM_EDGE, DOM_EDGE];
+  });
+  const domMat = () => domTiles[Math.floor(Math.random() * domTiles.length)];
   const coneGeo = new THREE.ConeGeometry(2.4, 6, 12).translate(0, 3.6, 0), coneMat = new THREE.MeshLambertMaterial({ map: rowsTex([['#ff7a1a'], ['#ff7a1a'], ['#fffaf0'], ['#ff7a1a'], ['#fffaf0'], ['#ff7a1a']]) });
-  const sevens = canvasTex(25, 8, (x) => { x.fillStyle = '#ffd84a'; x.fillRect(0, 0, 25, 8); x.drawImage(g.textArt('777', '#e8344e'), 1, 0); });
-  const symTex = g.SYMS.map(k => canvasTex(7, 8, (x) => { x.fillStyle = '#fffaf0'; x.fillRect(0, 0, 7, 8); x.drawImage(g.spriteArt(k), 1, 1); }));
+  // the 777 on the slot machines' toppers, in the middle of a sign 25 × 9 (the size of the topper's front)
+  const sevens = canvasTex(25, 9, (x) => { x.fillStyle = '#ffd84a'; x.fillRect(0, 0, 25, 9); const t = g.textArt('777', '#e8344e'); x.drawImage(t, (25 - t.width) >> 1, (9 - t.height) >> 1); });
+  // (round a drum lying along x, the strip's u goes round it, so up on the front of the drum is along u:
+  // each symbol is drawn turned a quarter turn, centred in its quarter of the strip)
+  const CELL = 12, reelTex = canvasTex(CELL * g.SYMS.length, 10, (x) => {
+    x.fillStyle = '#fffaf0'; x.fillRect(0, 0, CELL * g.SYMS.length, 10);
+    g.SYMS.forEach((k, i) => {
+      const art = g.spriteArt(k), d = art.getContext('2d').getImageData(0, 0, art.width, art.height).data;
+      for (let sy = 0; sy < art.height; sy++) for (let sx = 0; sx < art.width; sx++) {
+        const j = (sy * art.width + sx) * 4; if (!d[j + 3]) continue;
+        x.fillStyle = `rgb(${d[j]},${d[j + 1]},${d[j + 2]})`;
+        x.fillRect(i * CELL + Math.round(CELL / 2 + art.height / 2) - 1 - sy, Math.round(5 - art.width / 2) + sx, 1, 1);
+      }
+      x.fillStyle = '#e2dac6'; x.fillRect(i * CELL, 0, 1, 10);
+    });
+  });
+  // the drum's turn that brings symbol i round to the front
+  const symAngle = i => (i + 0.5) / g.SYMS.length * TAU;
+  const BULB = [glowing('#ffd84a'), glowing('#ffffff')];
   function gearShape(r, teeth) {
     const sh = new THREE.Shape(), n = teeth * 4;
     for (let i = 0; i <= n; i++) { const a = i / n * TAU, rr = (i % 4 < 2) ? r + 1.4 : r - 0.6; i ? sh.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : sh.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
@@ -426,7 +515,7 @@ export function create(g) {
       if (!o) {
         const tex = ballTex(w), body = mesh(ballGeo, new THREE.MeshPhongMaterial({ map: tex, shininess: 110, specular: 0x666666 }));
         body.quaternion.setFromEuler(new THREE.Euler(rnd(0, 6), rnd(0, 6), 0));
-        const halo = glowSprite(w.pal.main, 15, 0.5), grp = new THREE.Group();
+        const halo = glowSprite(w.pal.main, RW * 3.6, 0.5), grp = new THREE.Group();
         grp.add(body, halo); scene.add(grp);
         o = { grp, body, halo, tex, last: wheelPos(w, new THREE.Vector3()) }; balls.set(w, o);
       }
@@ -447,10 +536,9 @@ export function create(g) {
   }
 
   // ---------------- the moving parts, particles and score popups ----------------
-  let reelT = 0;
   function animate(t, dt) {
     const simT = g.simT, ct = g.C3.time();
-    boostTex.offset.x -= dt * 6; beltTex.offset.x -= dt * 24;
+    boostTex.offset.x -= dt * 1.5; beltTex.offset.x -= dt * 6;   // (slowly: fast stripes flicker)
     for (const { F, pivot } of D.flippers) {
       const ds = Math.sin(F.a), du = -F.side * Math.cos(F.a);
       pivot.rotation.y = Math.atan2(-du, ds);
@@ -460,20 +548,28 @@ export function create(g) {
     for (const { Dm, pieces } of D.doms) pieces.forEach((tip, i) => {
       // (tipping over on whichever bottom edge it's falling toward)
       const a = g.domAngle(Dm, i);
-      tip.rotation.z = -a; tip.position.x = a < 0 ? 0 : 1.6; tip.children[0].position.x = a < 0 ? 0 : -1.6;
+      tip.rotation.z = -a; tip.position.x = a < 0 ? 0 : 1.4; tip.children[0].position.x = a < 0 ? 0 : -1.4;
     });
     for (const { c, inner } of D.cones) inner.rotation.z = c.hit ? -c.dir * Math.min(Math.PI / 2, (ct - c.hit) * 8) : 0;
     for (const { m, sp, ph } of D.cogs) m.rotation.z = ph + t * sp;
-    reelT += dt;
-    for (const { S, reels, lever } of D.slots) {
-      let spinning = false;
+    for (const { F, rotor } of D.wheels) rotor.rotation.y = -F.rot;   // (three's y turn goes the other way round)
+    for (const { S, reels, lever, bulbs } of D.slots) {
       S.reels.forEach((r, i) => {
-        const spin = r.until > ct; spinning ||= spin;
-        const tex = symTex[spin ? Math.floor(reelT * 14 + i * 2) % symTex.length : r.s];
-        if (reels[i].material.map !== tex) { reels[i].material.map = tex; reels[i].material.needsUpdate = true; }
-        reels[i].position.y = 13.5 + (spin ? Math.sin(reelT * 60 + i) * 0.5 : 0);
+        const R = reels[i], spin = r.until > ct;
+        if (spin) { R.a += dt * 22; R.was = true; }
+        else if (R.was) {   // just stopped: ease round to the symbol that came up, with a little overshoot
+          R.was = false; R.from = R.a;
+          R.to = symAngle(r.s); while (R.to < R.a + 0.4) R.to += TAU;
+          R.k = 0;
+        }
+        if (R.k < 1) { R.k = Math.min(1, R.k + dt * 4); const e = 1 - Math.pow(1 - R.k, 3) * Math.cos(R.k * 5); R.a = R.from + (R.to - R.from) * e; }
+        R.drum.rotation.x = R.a;
       });
-      lever.rotation.x += ((spinning ? 0.9 : 0) - lever.rotation.x) * Math.min(1, dt * 10);
+      // the lever: yanked down when it's pulled, springing back up
+      const since = ct - (S.pulled ?? -9);
+      lever.rotation.x = since < 0.15 ? 1.1 * since / 0.15 : since < 0.7 ? 1.1 * (1 - (since - 0.15) / 0.55) : 0;
+      const hot = ct - S.won < 3, chase = Math.floor(t * (hot ? 16 : 4));
+      bulbs.forEach((b, i) => { b.material = BULB[(i + chase) % 3 ? 0 : 1]; });
     }
     for (const d of D.decor) {
       d.m.position.y += d.vy * dt; d.m.rotation.y = t * d.spin + d.ph; d.m.rotation.x = Math.sin(t * 0.4 + d.ph) * 0.5;
@@ -524,12 +620,17 @@ export function create(g) {
 
   // ---------------- the camera ----------------
   const camEl = document.createElement('div'); camEl.id = 'cam'; document.body.appendChild(camEl);
-  const cam = { mode: CFG.camera === 'overview' ? 'overview' : 'auto', key: null, dist: 90, userT: -1e9, zoomT: -1e9, leader: null };
-  // Moving the camera yourself (orbiting, zooming or panning) puts it in manual: it stays where you leave
-  // it until you pick something else (a racer to follow, auto, the whole course). Following a racer, it just
-  // changes the angle and how close it follows.
-  controls.addEventListener('start', () => { cam.userT = performance.now(); if (cam.mode !== 'follow' && cam.mode !== 'free') setMode('free'); });
-  renderer.domElement.addEventListener('wheel', () => { cam.zoomT = cam.userT = performance.now(); }, { passive: true });
+  const cam = { mode: CFG.camera === 'overview' ? 'overview' : 'auto', key: null, dist: 90, zoomK: 1, userT: -1e9, zoomT: -1e9, leader: null };
+  // Moving the camera yourself (orbiting or panning) puts it in manual: it stays where you leave it until
+  // you pick something else (a racer to follow, auto, the whole course). Following a racer, it just changes
+  // the angle and how close it follows. Zooming keeps it on auto (or the whole course), and sets how close
+  // that stays until you pick something else.
+  const steered = () => cam.mode === 'auto' || cam.mode === 'overview';
+  controls.addEventListener('start', () => { cam.userT = performance.now(); if (steered()) setMode('free'); });
+  renderer.domElement.addEventListener('wheel', e => {
+    cam.zoomT = cam.userT = performance.now();
+    if (steered()) cam.zoomK = clamp(cam.zoomK * (e.deltaY > 0 ? 1.12 : 1 / 1.12), 0.2, 5);
+  }, { passive: true });
   const fitR = r => r / Math.sin(camera.fov * Math.PI / 360) * (camera.aspect < 1 ? 1 / camera.aspect : 1);
   const center = () => new THREE.Vector3((K.lo[0] + K.hi[0]) / 2, (K.lo[1] + K.hi[1]) / 2, (K.lo[2] + K.hi[2]) / 2);
   const wholeDist = () => fitR(Math.hypot(K.hi[0] - K.lo[0], K.hi[1] - K.lo[1], K.hi[2] - K.lo[2]) / 2) * 0.85;
@@ -537,7 +638,7 @@ export function create(g) {
   function setMode(mode, w) {
     cam.mode = mode; cam.key = w ? w.key : null;
     if (w) cam.dist = 130;
-    cam.userT = cam.zoomT = -1e9;
+    cam.zoomK = 1; cam.userT = cam.zoomT = -1e9;
   }
   // a mod's "!cam …" from chat
   function command(arg) {
@@ -552,7 +653,7 @@ export function create(g) {
   const off = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3(), chase = new THREE.Vector3();
   function leader() {
     let best = null;
-    for (const w of g.live) if (!best || (w.dist || 0) > (best.dist || 0)) best = w;
+    for (const w of g.live) if (!w.rank && (!best || (w.dist || 0) > (best.dist || 0))) best = w;
     // (only change who's followed when someone's clearly ahead)
     if (cam.leader && g.live.includes(cam.leader) && best && (best.dist || 0) < (cam.leader.dist || 0) + 25) return cam.leader;
     return cam.leader = best;
@@ -590,6 +691,9 @@ export function create(g) {
       }
       else { target = want.copy(center()); dist = wholeDist(); }
     }
+    // (zooming on auto or the whole course is the camera's own: the controls' zoom is only for the others)
+    if (auto && dist) { dist *= cam.zoomK; if (behind) behind.setLength(dist); }
+    controls.enableZoom = !steered();
     controls.update();
     const k = 1 - Math.exp(-dt * 3);
     if (target) { tmp.copy(target).sub(controls.target).multiplyScalar(k); controls.target.add(tmp); camera.position.add(tmp); }

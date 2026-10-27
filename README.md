@@ -35,9 +35,12 @@ list is in the comment at the top of `index.html`. `?demo=1` fills it with fake 
 Set **View** to **3D** in the settings (or add `?view=3d`) for a 3D race instead: down one long, wide,
 continuous track that winds through space, built fresh every race (`course3d.js`) and drawn with three.js
 (`view3d.js`, loaded from jsDelivr). It has banked turns and switchbacks, helixes spiralling down, corkscrew
-loops, jumps fed by a conveyor, glass funnels the balls spiral down through onto the track below, a
+loops, jumps fed by a conveyor, glass funnels the balls spiral down through onto the track below,
+roulette wheels they spin round and settle into a pocket of (red's a boost, green 0 a bigger one), a
 pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts of dice, chips and
-bumpers to weave between, and lane splits with a boost pad down one side and a slow conveyor down the other.
+bumpers to weave between, lane splits with a boost pad down one side and a slow conveyor down the other,
+bumpers along the rails that knock balls back into the action, dominoes, and slot machines whose levers the
+balls pull as they pass (7-7-7 pays out a boost). Finished balls roll on into a tray past the checkered line.
 The racers are glossy balls in their chat colors with their initial on them, rolling along and across the
 track. It's all under a night sky with a city on the horizon and searchlights, so unlike the 2D view the
 source isn't see-through. Joining, starting, the signs, names and emote bubbles work the same as in 2D. OBS

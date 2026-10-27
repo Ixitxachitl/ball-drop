@@ -5,7 +5,7 @@
 // The track is built like a turtle drawing: a start, then one piece after another, each carrying on from
 // where the last left off: straights, banked turns, helixes spiralling down, corkscrew loops, jumps (a
 // conveyor feeds the lip, so everyone flies the same way), glass funnels the balls spiral down through onto
-// the track below, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
+// the track below, roulette wheels they spin round and settle into a pocket of, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
 // of dice, chips and bumpers to weave between, and lane splits with something different down each side,
 // then a finish arch. It turns back toward the middle before it wanders too far, and a piece that would run
 // into track already there is built some other way.
@@ -23,7 +23,9 @@ export function createCourse(g) {
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), smooth = t => t * t * (3 - 2 * t);
   const ease = (a, b, t) => a + (b - a) * smooth(clamp(t, 0, 1));
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
-  const W = 36, HW = W / 2, UB = HW - RW - 1.2;      // track width, half of it, how far across a ball's middle can go
+  // track width, half of it, the inside faces of its side rails, and how far across a ball's middle can go
+  const W = 36, HW = W / 2, RAIL = HW - 1.2, UB = RAIL - RW;
+  const EDGE = RAIL - 2.8;   // (where dominoes and cones stand along the edge: their middles, just inside the rail)
   const MINV = 55, VMAX = 230, ROLL = 0.75;           // speed of its own, top speed, how much of gravity a rolling ball feels
   const BOUND = { x: 430, z: 300 }, TARGET = 2900;    // how far it wanders, and how long it is
   let K = null, tur = null, pieces = [], total = 0, grid = new Map(), t = 0;
@@ -73,11 +75,23 @@ export function createCourse(g) {
     return p;
   }
 
+  // A piece that starts with a curve sweeping up behind it, like a quarter-pipe, so balls dropped onto
+  // it (out of a funnel's spout) land in the dip and anything bouncing back rolls up the curve and returns.
+  // It's placed so the bottom of the curve is right where the turtle is.
+  const CURVE = 26;
+  function catcher(len) {
+    const pitch = s => s < CURVE ? -1.25 + (1.25 - 0.07) * smooth(s / CURVE) : -0.07;
+    let dh = 0, dv = 0;
+    for (let s = 0; s < CURVE; s += 0.25) { dh += Math.cos(pitch(s)) * 0.25; dv += Math.sin(pitch(s)) * 0.25; }
+    const yaw = tur.yaw;
+    tur = { x: tur.x - Math.cos(yaw) * dh, y: tur.y - dv, z: tur.z - Math.sin(yaw) * dh, yaw, pitch: -1.25 };
+    return sweep('land', len + CURVE, f => [yaw, pitch(f * (len + CURVE)), 0], { catcher: true });
+  }
   const straight = (len, pitch1, o = {}) => { const y0 = tur.yaw, p0 = tur.pitch; return sweep(o.kind || 'straight', len, f => [y0, ease(p0, pitch1, f * 2.5), 0], o); };
   // a banked turn (or, turning far enough and dropping steeply, a helix)
   function turn(angle, R, pitch1, o = {}) {
     const y0 = tur.yaw, p0 = tur.pitch, v = 90, bank = clamp(v * v / (G * R), 0, 0.6) * Math.sign(angle);
-    return sweep(o.kind || 'turn', Math.abs(angle) * R, f => [y0 + angle * f, ease(p0, pitch1, f * 2), bank * Math.sin(Math.PI * f)], o);
+    return sweep(o.kind || 'turn', Math.abs(angle) * R, f => [y0 + angle * f, ease(p0, pitch1, f * 2), bank * Math.sin(Math.PI * f)], { turnSign: Math.sign(angle), ...o });
   }
   // A corkscrew loop of radius R: round a vertical circle, shifting sideways a track's width as it goes so
   // it comes out beside where it went in. On the inside of it, "up" off the track points at its middle.
@@ -122,29 +136,50 @@ export function createCourse(g) {
       } else for (const u of [-6.5, 6.5]) post(p, s, u + rnd(-0.3, 0.3), 1.5, 'pin', { e: 0.45 });
     }
   }
-  // a bumper set into a rail, kicking balls back toward the middle
-  const wallBumper = (p, s, side) => bumper(p, s, side * (HW - 1.5));
   function dominoes(p, a, side) {
     const nn = ri(7, 12), ds = Array.from({ length: nn }, (_, i) => a + i * 4);
     if (ds[nn - 1] > p.len - 4) return;
     p.doms.push({ ds, f: 1, start: -1, side, p });
   }
+  // Rubber deflectors standing out from a rail at an angle: a ball rolling along the edge hits one and is
+  // kicked back across the track, often into a bumper, die or chip stack standing just past it. On a turn
+  // they're mostly on the outside, where balls get flung. Returns where they went, so nothing's put on top.
+  function deflectors(p, every = [32, 55]) {
+    const used = [];
+    if (p.kind === 'loop' || p.len < 40) return used;
+    for (let s = rnd(14, 26); s < p.len - 30; s += rnd(...every)) {
+      if (p.regions.some(r => s + 30 > r.a && s - 4 < r.b) || p.obs.some(o => Math.abs(o.s - s - 15) < 20)) continue;
+      const side = p.turnSign && Math.random() < 0.8 ? -p.turnSign : pick([-1, 1]);
+      p.segs.push({ as: s, au: side * (RAIL - 1.4), bs: s + 11, bu: side * (RAIL - 8), e: 0.55, kick: 50, deflector: true });
+      if (Math.random() < 0.65) {
+        const k = pick(['bumper', 'die', 'chip', 'bumper']), r = k === 'bumper' ? 4.5 : k === 'die' ? 3.6 : 3.8, u = -side * rnd(0, fits(r));
+        if (k === 'bumper') bumper(p, s + 24, u); else post(p, s + 24, u, r, k, { face: ri(1, 6), e: 0.4, h: ri(2, 4) });
+      }
+      used.push([s - 2, s + 30]);
+    }
+    return used;
+  }
   function dress(p) {
-    // dominoes and cones along the edges, lamps beside it
+    // deflectors kicking balls off the rails, dominoes and cones along the edges (where there aren't
+    // deflectors), lamps beside it
     if (p.kind === 'loop' || p.len < 40) return;
-    if (Math.random() < 0.35) dominoes(p, rnd(6, Math.max(7, p.len - 60)), pick([-1, 1]));
-    if (Math.random() < 0.3) { const s0 = rnd(6, p.len - 20), side = pick([-1, 1]); for (let k = 0; k < ri(2, 4); k++) p.cones.push({ s: s0 + k * 6, u: side * (HW - 3), hit: 0 }); }
+    // (and nothing on top of boost pads or conveyors)
+    const used = deflectors(p).concat(p.regions.map(r => [r.a, r.b])), clear = (a, b) => !used.some(([u0, u1]) => b > u0 && a < u1);
+    const ds = rnd(6, Math.max(7, p.len - 60));
+    if (Math.random() < 0.35 && clear(ds, ds + 50)) dominoes(p, ds, pick([-1, 1]));
+    const s0 = rnd(6, p.len - 20);
+    if (Math.random() < 0.3 && clear(s0, s0 + 26)) { const side = pick([-1, 1]); for (let k = 0; k < ri(2, 4); k++) p.cones.push({ s: s0 + k * 6, u: side * EDGE, hit: 0 }); }
     for (let s = rnd(10, 40); s < p.len - 5; s += rnd(60, 110)) p.lamps.push({ s, side: pick([-1, 1]) });
   }
 
   // ---- features: one or more pieces that carry on from the turtle ----
-  const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2 };
+  const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
     if (kind === 'straight') { const p = add(straight(rnd(70, 140), -rnd(0.06, 0.12))); if (Math.random() < 0.4) p.regions.push({ a: p.len * 0.4, b: p.len * 0.4 + 14, boost: 165 }); dress(p); }
     else if (kind === 'turn') dress(add(turn(pick([-1, 1]) * rnd(0.9, 2.4), rnd(55, 95), -rnd(0.05, 0.1))));
-    else if (kind === 'helix') add(turn(pick([-1, 1]) * rnd(TAU * 0.9, TAU * 1.6), rnd(45, 60), -rnd(0.16, 0.22), { kind: 'helix' }));
+    else if (kind === 'helix') deflectors(add(turn(pick([-1, 1]) * rnd(TAU * 0.9, TAU * 1.6), rnd(45, 60), -rnd(0.16, 0.22), { kind: 'helix' })), [45, 70]);
     else if (kind === 'loop') {
       const R = rnd(16, 22), lead = add(straight(60, 0, { kind: 'straight' }));
       lead.regions.push({ a: 20, b: 40, boost: 190 });
@@ -163,34 +198,55 @@ export function createCourse(g) {
       lip.gapTo = out.length;   // (the next piece)
       dress(add(straight(150, -0.07, { kind: 'land' })));
     } else if (kind === 'funnel') {
-      // The track runs level up to the rim of a glass funnel wider than itself, standing just ahead of its
-      // end and a little lower, so the balls roll off the end over the rim and drop in. Each goes round the
-      // way it came in (to the left of the middle one way, to the right the other), spirals down, and drops
-      // out of the spout onto the next piece below.
-      const lead = add(straight(50, -0.02));
-      const R = HW + rnd(6, 10), Hf = rnd(34, 46), yaw = tur.yaw;
-      const cx = tur.x + Math.cos(yaw) * (R - 1), cz = tur.z + Math.sin(yaw) * (R - 1), cy = tur.y - 2;
-      lead.end = 'funnel'; lead.fun = { cx, cy, cz, R, H: Hf };
-      tur = { x: cx, y: cy - Hf - 34, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: -0.1 };
+      // A big glass coin funnel, the track feeding in along its rim: it runs out over the bowl, round the
+      // edge, and the balls roll off its end onto the glass already going round. From there it's all
+      // physics (see stepFunnel): they circle the bowl, slowly losing speed, spiral down to the spout and
+      // drop out of it onto the next piece below, which catches them in a curve.
+      const lead = add(straight(60, -0.02));
+      const R = 2 * HW + rnd(8, 14), rs = 2 * RW + 1, Hf = rnd(40, 52), yaw = tur.yaw, side = pick([-1, 1]);
+      const re = R - HW - 4;   // (the track's middle, that far out from the funnel's)
+      const cx = tur.x - Math.sin(yaw) * side * re, cz = tur.z + Math.cos(yaw) * side * re, cy = tur.y - 4;
+      const F = { cx, cy, cz, R, rs, H: Hf, Kf: Hf / (R / rs - 1) };
+      lead.end = 'funnel'; lead.fun = F;
+      // (and nothing else is built through the bowl)
+      lead.extra = [];
+      for (let k = 0; k < 16; k++) for (const [rr, yy] of [[R, cy], [R * 0.55, cy - F.Kf * (R / (R * 0.55) - 1)], [rs, cy - Hf]]) lead.extra.push([cx + Math.cos(k / 16 * TAU) * rr, yy, cz + Math.sin(k / 16 * TAU) * rr]);
+      tur = { x: cx, y: cy - Hf - 30, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: 0 };
       lead.gapTo = out.length;
-      dress(add(straight(130, -0.07, { kind: 'land' })));
+      dress(add(catcher(130)));
+    } else if (kind === 'roulette') {
+      // A roulette wheel, fed along its rim like a funnel: the balls roll round the sloping ball track,
+      // slowing, drop onto the spinning wheel, bounce over a few pockets and settle in one, ride it round,
+      // then go down through it and out under the wheel onto a catcher below. Red's a boost, green (0) a
+      // bigger one, black nothing. (See stepFunnel and stepPocket.)
+      const lead = add(straight(60, -0.02));
+      const R = 2 * HW + rnd(22, 28), yaw = tur.yaw, side = pick([-1, 1]), re = R - HW - 4, k = 0.32;
+      const cx = tur.x - Math.sin(yaw) * side * re, cz = tur.z + Math.cos(yaw) * side * re, cy = tur.y - 4;
+      // the wheel's edge, where its pockets are, and the cone in its middle the balls bounce off
+      const Rr = R * 0.75, Rp = Rr * 0.81, Rh = Rr * 0.72;
+      const F = { wheel: true, cx, cy, cz, R, Rr, Rp, Rh, rs: Rh + RW, k, yR: cy - k * (R - Rr) - 0.3, H: 22, rot: rnd(0, TAU), om: 0.9 * pick([-1, 1]), held: [] };
+      lead.end = 'funnel'; lead.fun = F;
+      lead.extra = [];
+      for (let k2 = 0; k2 < 24; k2++) for (const [rr, yy] of [[R + 4, cy], [Rr, F.yR], [Rh * 0.6, cy - F.H]]) lead.extra.push([cx + Math.cos(k2 / 24 * TAU) * rr, yy, cz + Math.sin(k2 / 24 * TAU) * rr]);
+      tur = { x: cx, y: cy - F.H - 30, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: 0 };
+      lead.gapTo = out.length;
+      dress(add(catcher(130)));
     } else if (kind === 'plinko') {
       const p = add(straight(rnd(150, 190), -0.36, { kind: 'plinko' }));
       pins(p, 55, p.len - 12);
       add(straight(40, -0.06));
     } else if (kind === 'pinball') {
       const p = add(straight(160, -0.22, { kind: 'pinball' }));
-      for (let s = rnd(45, 55); s < 112; s += rnd(18, 26)) Math.random() < 0.5 ? bumper(p, s, rnd(-fits(4.5), fits(4.5))) : wallBumper(p, s, pick([-1, 1]));
+      for (let s = rnd(45, 55); s < 112; s += rnd(18, 26)) bumper(p, s, rnd(-fits(4.5), fits(4.5)));
       // slingshots angled in from each side above the flippers, and the flippers themselves
-      for (const sd of [-1, 1]) p.segs.push({ as: 118, au: sd * (HW - 1), bs: 132, bu: sd * (HW - 6), e: 0.9, kick: 70, sling: true });
-      for (const sd of [-1, 1]) p.flips = (p.flips || []).concat({ p, ps: p.len - 16, pu: sd * (HW - 1), side: sd, len: 12, rest: 0.5, up: -0.55, a: 0.5, st: 0, next: rnd(0.4, 1.8) });
+      for (const sd of [-1, 1]) p.segs.push({ as: 118, au: sd * (RAIL - 1.4), bs: 132, bu: sd * (RAIL - 6.4), e: 0.9, kick: 70, sling: true });
+      for (const sd of [-1, 1]) p.flips = (p.flips || []).concat({ p, ps: p.len - 16, pu: sd * (RAIL - 2.4), side: sd, len: 11, rest: 0.5, up: -0.55, a: 0.5, st: 0, next: rnd(0.4, 1.8) });
       add(straight(40, -0.06));
     } else if (kind === 'posts') {
       const p = add(straight(rnd(120, 170), -0.12, { kind: 'posts' }));
       for (let s = 30; s < p.len - 20; s += rnd(16, 26)) {
-        const k = pick(['die', 'chip', 'bumper', 'die', 'wall']), r = k === 'die' ? 3.6 : k === 'chip' ? 3.8 : 4.5, u = rnd(-fits(r), fits(r));
-        if (k === 'wall') wallBumper(p, s, pick([-1, 1]));
-        else if (k === 'bumper') bumper(p, s, u); else post(p, s, u, r, k, { face: ri(1, 6), e: 0.4, h: ri(2, 4) });
+        const k = pick(['die', 'chip', 'bumper', 'die']), r = k === 'die' ? 3.6 : k === 'chip' ? 3.8 : 4.5, u = rnd(-fits(r), fits(r));
+        if (k === 'bumper') bumper(p, s, u); else post(p, s, u, r, k, { face: ri(1, 6), e: 0.4, h: ri(2, 4) });
       }
       dress(p);
     } else if (kind === 'lanes') {
@@ -207,9 +263,9 @@ export function createCourse(g) {
 
   // ---- not running into track that's already there ----
   const CELL = 24, key = (x, z) => Math.floor(x / CELL) * 100003 + Math.floor(z / CELL);
+  const pointsOf = p => { const out = []; for (let i = 0; i < p.n; i += 2) out.push([p.P[i * 3], p.P[i * 3 + 1], p.P[i * 3 + 2]]); return out.concat(p.extra || []); };
   function clashes(ps) {
-    for (const p of ps) for (let i = 0; i < p.n; i += 2) {
-      const x = p.P[i * 3], y = p.P[i * 3 + 1], z = p.P[i * 3 + 2];
+    for (const p of ps) for (const [x, y, z] of pointsOf(p)) {
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
         for (const e of grid.get(key(x + a * CELL, z + b * CELL)) || []) if (Math.abs(e[1] - y) < 42 && Math.hypot(e[0] - x, e[2] - z) < W + 8) return true;
       }
@@ -219,7 +275,7 @@ export function createCourse(g) {
   // (the last little bit of track is left out, so a piece doesn't clash with the one it carries on from)
   let pending = [];
   function remember(ps) {
-    for (const p of ps) for (let i = 0; i < p.n; i += 2) pending.push([p.P[i * 3], p.P[i * 3 + 1], p.P[i * 3 + 2]]);
+    for (const p of ps) pending.push(...pointsOf(p));
     while (pending.length > 50) { const e = pending.shift(), k = key(e[0], e[2]); let l = grid.get(k); if (!l) grid.set(k, l = []); l.push(e); }
   }
   function place(ps) {
@@ -251,14 +307,14 @@ export function createCourse(g) {
       }
       if (!ok) { const ps = [straight(60, -0.25)]; tur = ps[0].after; place(ps); }   // (dive steeply out of the way)
     }
-    const goal = straight(110, -0.04, { kind: 'goal', style: 'track' }); tur = goal.after; place([goal]);
+    const goal = straight(150, -0.04, { kind: 'goal', style: 'track' }); tur = goal.after; place([goal]);
     for (const p of pieces) if (!p.landOn && p.end && p.gapTo == null) p.landOn = p.i + 1;
 
     // everything the views and the race need
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const p of pieces) for (let i = 0; i < p.n; i++) for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j], p.P[i * 3 + j]); hi[j] = Math.max(hi[j], p.P[i * 3 + j]); }
     K = {
-      three: true, stuck: {}, pieces, total, W, HW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
+      three: true, stuck: {}, pieces, total, wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
       flippers: pieces.flatMap(p => p.flips || []), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
@@ -351,6 +407,7 @@ export function createCourse(g) {
     let au = -G * f.B[1] * ROLL - f.kB * w.vs * Math.abs(w.vs);
     w.vs += as * dt;
     if (p.loop || p.kind === 'loop') w.vs = Math.max(w.vs, p.vmin);
+    else if (w.rank) { w.vs *= 1 - 1.2 * dt; w.vu *= 1 - 1.2 * dt; }   // (home: rolling to a stop in the tray at the end)
     else if (!(p.noAssist && !racing)) {
       if (w.vs < MINV) w.vs += Math.min(MINV - w.vs, 240 * dt);
       else if (w.vs > MINV + 30) w.vs -= (w.vs - MINV) * 0.22 * dt;
@@ -366,11 +423,11 @@ export function createCourse(g) {
     for (const o of p.obs) if (Math.abs(o.s - w.s) < o.r + RW + 1) hitPost(w, o);
     for (const sg of p.segs) if (sg.on !== false) hitSeg(w, sg);
     for (const F of p.flips || []) hitSeg(w, F.seg);
-    if (racing) for (const D of p.doms) if (D.start < 0 && Math.abs(w.u - D.side * (HW - 2.5)) < RW + 2) {
+    if (racing) for (const D of p.doms) if (D.start < 0 && Math.abs(w.u - D.side * EDGE) < RW + 2) {
       const i = D.ds.findIndex(s => Math.abs(w.s - s) < RW); if (i >= 0) g.knockDominoes(D, i, { vx: w.vs });
     }
     for (const c of p.cones) if (!c.hit && Math.abs(w.s - c.s) < RW + 2 && Math.abs(w.u - c.u) < RW + 2) { c.hit = t; c.dir = Math.sign(w.vs) || 1; }
-    for (const S of K.slots) if (S.p === p && Math.abs(w.s - S.s) < 3) spin(S);
+    for (const S of K.slots) if (S.p === p && Math.abs(w.s - S.s) < 3) spin(S, w);
     // off the end
     if (w.s >= p.len) {
       if (p.kind === 'goal' || w.pi === pieces.length - 1) { w.s = p.len - 0.01; w.vs = 0; }
@@ -384,7 +441,7 @@ export function createCourse(g) {
     }
     place3(w);
     w.dist = pieces[w.pi].s0 + w.s;
-    if (racing && w.pi === K.goalPiece.i && w.s >= K.finishS) onFinish(w);
+    if (racing && !w.rank && w.pi === K.goalPiece.i && w.s >= K.finishS) onFinish(w);
   }
   function toAir(w, f) {
     w.m3 = 'air';
@@ -407,33 +464,99 @@ export function createCourse(g) {
       w.vu = w.vx * p.B[bi * 3] + w.vy * p.B[bi * 3 + 1] + w.vz * p.B[bi * 3 + 2];
       const vn = -(w.vx * p.N[bi * 3] + w.vy * p.N[bi * 3 + 1] + w.vz * p.N[bi * 3 + 2]);
       if (vn > 60) emit(w.X, -w.Y + RW, Math.min(14, 2 + vn / 18 | 0), ['#e8d9b0', '#b8a888', '#fff3a8'], 40, vn / 6, 220, undefined, w.Z);
+      if (w.rBoost) { w.vs = Math.max(w.vs, w.rBoost); w.boostT = 1; w.rBoost = 0; }   // (red or green on a roulette wheel)
       place3(w); return;
     }
     if (w.Y < p.minY - 80) { note('missed ' + pieces[w.pi].kind + '>' + p.kind); w.m3 = 'track'; w.pi = p.i; w.s = 8; w.u = clamp(w.u || 0, -UB, UB); w.vs = MINV; w.vu = 0; w.warps++; place3(w); return; }
     flat(w);
   }
   // round and round a funnel, tighter and faster, then out of the spout
+  // Into a funnel: from the end of the track the ball's moving round the bowl and a little in or out; its
+  // place and speed become how far out it is (r) and round (th), how fast it's going in or out, and its
+  // spin round the middle (L, angular momentum). It drops onto the glass from the end of the track first.
+  const FUNNEL_DRAG = 0.55;   // (how fast rolling drag takes its speed round, so it spirals in)
+  // (a roulette wheel's ball track is a shallow cone down to the wheel, which is flat)
+  const bowlY = (F, r) => F.wheel ? F.cy - F.k * (F.R - Math.max(r, F.Rr)) : F.cy - F.Kf * (F.R / r - 1);
+  const slope = (F, r) => F.wheel ? (r > F.Rr ? F.k : 0) : F.Kf * F.R / (r * r);   // (how steep, and how fast that changes)
+  const bend = (F, r) => F.wheel ? 0 : -2 * F.Kf * F.R / (r * r * r);
   function toFunnel(w, F) {
-    w.m3 = 'funnel'; w.F = F; w.fk = 0; w.fth = Math.atan2(w.Z - F.cz, w.X - F.cx); w.fr0 = clamp(Math.hypot(w.X - F.cx, w.Z - F.cz), 3, F.R - RW); w.fv = Math.max(60, w.vs);
-    w.fy0 = w.Y;
-    // round the way it was heading across: which side of the middle it came in on
-    const f = w.fr, rx = w.X - F.cx, rz = w.Z - F.cz, vx = f.T[0] * w.vs + f.B[0] * w.vu, vz = f.T[2] * w.vs + f.B[2] * w.vu;
-    w.fdir = Math.sign(rx * vz - rz * vx) || (w.u >= 0 ? 1 : -1);
+    const f = w.fr, rx = w.X - F.cx, rz = w.Z - F.cz, r = clamp(Math.hypot(rx, rz), F.rs + 1, F.R - RW - 0.6);
+    const vx = f.T[0] * w.vs + f.B[0] * w.vu, vy = f.T[1] * w.vs + f.B[1] * w.vu, vz = f.T[2] * w.vs + f.B[2] * w.vu;
+    Object.assign(w, { m3: 'funnel', F, frad: r, fth: Math.atan2(rz, rx), fvr: (vx * rx + vz * rz) / r, fL: (-rz * vx + rx * vz), fvh: vy, flap: 0, pocket: null });
+    w.fh = Math.max(0, w.Y - bowlY(F, r) - RW);
     w.land = pieces[w.pi].landOn;
   }
-  const FUNNEL_TIME = 2.2;
+  // Rolling on the inside of the bowl, a surface of revolution whose height at r is bowlY: nearly flat at the
+  // rim, steeper and steeper toward the spout, like a coin funnel. Its spin round the middle is kept apart
+  // from drag, which takes a little off it, so it circles lower and lower; in or out it's pulled down the
+  // slope and flung out by going round.
   function stepFunnel(w, dt) {
-    const F = w.F, k = Math.min(1, (w.fk += dt / FUNNEL_TIME)), r = w.fr0 * (1 - k) + 1.6 * k, v = Math.min(200, w.fv + 70 * k);
-    w.fth += w.fdir * v / Math.max(r, 3) * dt;
-    // riding the inside of the bowl at that radius (dropping onto it from the end of the track at first)
-    const surf = F.cy - F.H * clamp((F.R - r) / (F.R - 1.6), 0, 1) + RW;
-    w.X = F.cx + Math.cos(w.fth) * r; w.Z = F.cz + Math.sin(w.fth) * r; w.Y = surf + (w.fy0 - surf) * Math.max(0, 1 - k * 6);
-    if (k >= 1) { w.m3 = 'air'; w.vx = rnd(-8, 8); w.vy = -50; w.vz = rnd(-8, 8); w.Y = F.cy - F.H - 2; }
+    if (w.pocket) return stepPocket(w, dt);
+    const F = w.F, r = w.frad, g = G * ROLL, hp = slope(F, r), hpp = bend(F, r), thd = w.fL / (r * r);
+    let rdd;
+    if (w.fh > 0) {   // still dropping onto the glass from the end of the track
+      w.fvh -= G * dt; w.fh += w.fvh * dt;
+      if (w.fh <= 0) { w.fh = 0; w.fvh = 0; }
+      rdd = r * thd * thd;
+    } else rdd = (r * thd * thd - g * hp - hp * hpp * w.fvr * w.fvr) / (1 + hp * hp);
+    w.fvr += rdd * dt; w.fvr *= 1 - 0.3 * dt; w.fL *= 1 - FUNNEL_DRAG * dt;
+    w.frad += w.fvr * dt; w.fth += thd * dt;
+    if (w.frad > F.R - RW - 0.6) { w.frad = F.R - RW - 0.6; if (w.fvr > 0) w.fvr *= -0.35; }   // (the rim's lip)
+    if (F.wheel) {
+      // once it's been round once (or it's stopped dead), onto the wheel and into the pockets; till then it
+      // skims over the frets, and going round flings it back out onto the ball track, or it bounces off the middle
+      w.flap += Math.abs(thd) * dt;
+      if (w.frad < F.Rr && !w.fh && (w.flap > TAU || Math.abs(w.fL) / w.frad < 12)) { w.pocket = { phi: wrap(w.fth - F.rot), phd: thd - F.om, n: null }; return stepPocket(w, 0); }
+      if (w.frad < F.rs) { w.frad = F.rs; if (w.fvr < 0) w.fvr *= -0.5; }
+    } else if (w.frad <= F.rs + 0.4) return spout(w);
+    // the ball's middle: out from the glass, square to it
+    const h1 = slope(F, w.frad), nl = Math.hypot(1, h1), out = w.frad - h1 / nl * RW;
+    w.X = F.cx + Math.cos(w.fth) * out; w.Z = F.cz + Math.sin(w.fth) * out; w.Y = bowlY(F, w.frad) + RW / nl + w.fh + (F.wheel && w.frad < F.Rr ? 1.1 : 0);
     flat(w);
   }
 
-  // the flippers, swinging up now and then; and the start gate
+  // out of the bottom: of a funnel's spout, or the chute under a roulette wheel
+  function spout(w) {
+    const F = w.F;
+    Object.assign(w, { m3: 'air', pocket: null, X: F.cx + rnd(-0.5, 0.5), Y: F.cy - F.H - 2, Z: F.cz + rnd(-0.5, 0.5), vx: rnd(-6, 6), vy: -60, vz: rnd(-6, 6) });
+    flat(w);
+  }
+  // In a roulette wheel's pockets: going round with the wheel, it skips over the frets between them, slower
+  // and slower, till it drops into one (not one with a ball already in it). It rides that round a moment,
+  // then drops through.
+  const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+  const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]), SLOT = TAU / 37;
+  const pocketColor = n => n === 0 ? 'green' : REDS.has(n) ? 'red' : 'black';
+  function stepPocket(w, dt) {
+    const F = w.F, P = w.pocket;
+    let hop = 0;
+    w.frad += (F.Rp - w.frad) * Math.min(1, 6 * dt);
+    if (P.n == null) {
+      P.phd *= 1 - 2.5 * dt; P.phi += P.phd * dt;
+      hop = Math.abs(Math.sin(P.phi / SLOT * Math.PI)) * Math.min(1.6, Math.abs(P.phd));
+      if (Math.abs(P.phd) < 0.35) {
+        const j = Math.round(P.phi / SLOT), i = ((j % 37) + 37) % 37;
+        if (F.held[i]?.pocket) P.phd = (Math.sign(P.phd) || 1) * 0.9;   // (taken: on to the next)
+        else {
+          F.held[i] = w; P.to = j * SLOT; P.n = WHEEL[i]; P.at = t;
+          const c = pocketColor(P.n);
+          w.rBoost = c === 'green' ? 230 : c === 'red' ? 160 : 0;
+          popup(w.X, -w.Y - 8, P.n + ' ' + c.toUpperCase(), { green: '#3fdc7a', red: '#ff3b5c', black: '#e8e6f4' }[c], w.Z);
+          if (c === 'green') emit(w.X, -w.Y, 24, ['#3fdc7a', '#ffd84a', '#fff'], 60, 80, 200, [0.5, 1.1], w.Z);
+        }
+      }
+    } else {
+      P.phi += (P.to - P.phi) * Math.min(1, 8 * dt);
+      if (t - P.at > 1.4) return spout(w);
+    }
+    w.fth = F.rot + P.phi;
+    w.X = F.cx + Math.cos(w.fth) * w.frad; w.Z = F.cz + Math.sin(w.fth) * w.frad; w.Y = F.yR + RW + hop;
+    flat(w);
+  }
+
+  // the flippers, swinging up now and then; the roulette wheels turning; and the start gate
   function movers(dt) {
+    for (const F of K.wheels) F.rot += F.om * dt;
     for (const F of K.flippers) {
       if (F.st === 0 && t >= F.next) F.st = 1;
       const was = F.a;
@@ -446,8 +569,10 @@ export function createCourse(g) {
       Object.assign(F.seg, { as: F.ps, au: F.pu, bs: F.ps + ds * F.len, bu: F.pu + du * F.len, spin: -F.side * (F.a - was) / dt });
     }
   }
-  function spin(S) {
+  // A ball rolling past a slot machine pulls its lever; on 7-7-7 it pays out, and that ball gets a boost.
+  function spin(S, w) {
     if (S.reels.some(r => r.until > t)) return;
+    S.who = w; S.pulled = t;
     const jackpot = Math.random() < 0.18;
     S.reels.forEach((r, i) => { r.until = t + 0.5 + i * 0.35; r.s = jackpot ? 0 : ri(0, SYMS.length - 1); });
     if (!jackpot && S.reels.every(r => r.s === 0)) S.reels[2].s = 1;
@@ -456,18 +581,30 @@ export function createCourse(g) {
 
   // Balls bump into each other in the world; on the track, what that does to them is along and across it.
   function pairs(ws) {
-    const vel = (w, o) => w.m3 === 'track' ? (o[0] = w.vs * w.fr.T[0] + w.vu * w.fr.B[0], o[1] = w.vs * w.fr.T[1] + w.vu * w.fr.B[1], o[2] = w.vs * w.fr.T[2] + w.vu * w.fr.B[2], o) : (o[0] = w.vx, o[1] = w.vy, o[2] = w.vz, o);
+    // (balls right at a funnel's spout don't block each other: they just go through)
+    const bumps = w => w.m3 === 'track' || w.m3 === 'air' || (w.m3 === 'funnel' && !w.pocket && w.frad > w.F.rs + 3);
+    // (in a funnel, in or out is along the radius and round is across it)
+    const radial = w => { const c = Math.cos(w.fth), sn = Math.sin(w.fth); return [c, sn, -sn, c]; };
+    const vel = (w, o) => {
+      if (w.m3 === 'track') { o[0] = w.vs * w.fr.T[0] + w.vu * w.fr.B[0]; o[1] = w.vs * w.fr.T[1] + w.vu * w.fr.B[1]; o[2] = w.vs * w.fr.T[2] + w.vu * w.fr.B[2]; }
+      else if (w.m3 === 'funnel') { const [cr, sr, ct, st] = radial(w), vt = w.fL / w.frad; o[0] = w.fvr * cr + vt * ct; o[1] = 0; o[2] = w.fvr * sr + vt * st; }
+      else { o[0] = w.vx; o[1] = w.vy; o[2] = w.vz; }
+      return o;
+    };
     const nudge = (w, x, y, z, isVel) => {
-      if (w.m3 === 'track') {
+      if (w.m3 === 'funnel') {
+        const [cr, sr, ct, st] = radial(w), dr = x * cr + z * sr, dt2 = x * ct + z * st;
+        if (isVel) { w.fvr += dr; w.fL += w.frad * dt2; } else { w.frad = clamp(w.frad + dr, w.F.rs + 0.5, w.F.R - RW - 0.6); w.fth += dt2 / w.frad; }
+      } else if (w.m3 === 'track') {
         const ds = x * w.fr.T[0] + y * w.fr.T[1] + z * w.fr.T[2], du = x * w.fr.B[0] + y * w.fr.B[1] + z * w.fr.B[2];
         if (isVel) { w.vs += ds; w.vu += du; } else { w.s += ds; w.u = clamp(w.u + du, -UB, UB); }
       } else if (isVel) { w.vx += x; w.vy += y; w.vz += z; } else { w.X += x; w.Y += y; w.Z += z; }
     };
     const va = [0, 0, 0], vb = [0, 0, 0];
     for (let i = 0; i < ws.length; i++) {
-      const a = ws[i]; if (a.m3 !== 'track' && a.m3 !== 'air') continue;
+      const a = ws[i]; if (!bumps(a)) continue;
       for (let j = i + 1; j < ws.length; j++) {
-        const b = ws[j]; if (b.m3 !== 'track' && b.m3 !== 'air') continue;
+        const b = ws[j]; if (!bumps(b)) continue;
         const dx = b.X - a.X, dy = b.Y - a.Y, dz = b.Z - a.Z;
         if (dx > 8 || dx < -8 || dy > 8 || dy < -8 || dz > 8 || dz < -8) continue;
         const d2 = dx * dx + dy * dy + dz * dz; if (d2 >= 4 * RW * RW || d2 < 1e-6) continue;
@@ -482,7 +619,7 @@ export function createCourse(g) {
 
   // A ball that's barely moving gets a nudge; one that hasn't got further along for a while is lifted on.
   function watch(w, dt) {
-    if (w.m3 !== 'track') return;
+    if (w.m3 !== 'track' || w.rank) return;
     if (Math.abs(w.vs) < 8) w.idle += dt; else w.idle = Math.max(0, w.idle - 2 * dt);
     if (w.idle > 1.2) { w.idle = 0; w.kicks++; note('kick ' + pieces[w.pi].kind); w.vs = 90; w.vu = rnd(-30, 30); }
     if (w.dist > (w.best ?? -1) + 3) { w.best = w.dist; w.prog = t; }
@@ -505,6 +642,8 @@ export function createCourse(g) {
   function update(simT) {
     for (const S of K.slots) if (S.payAt && t >= S.payAt) {
       S.payAt = 0; S.won = t;
+      const w = S.who;
+      if (w && w.m3 === 'track') { w.vs = Math.max(w.vs, 200); w.boostT = 1.5; popup(w.X, -w.Y - 10, 'JACKPOT', '#ffd84a', w.Z); emit(w.X, -w.Y, 24, ['#ffd84a', '#fff3a8', '#e8a020'], 60, 80, 200, [0.5, 1.1], w.Z); }
       const f = at(S.p, S.s, fr()), x = f.P[0] + f.B[0] * S.side * (HW + 16), y = f.P[1] + 30, z = f.P[2] + f.B[2] * S.side * (HW + 16);
       emit(x, -y, 28, ['#ffd84a', '#fff3a8', '#e8a020'], 60, 120, 260, [0.6, 1.3], z);
       popup(x, -y - 10, 'JACKPOT', '#ffd84a', z);
@@ -520,8 +659,14 @@ export function createCourse(g) {
       pi: 0, s, u, vs: 0, vu: 0, ps: s, pu: u, idle: 0, best: -1, prog: t, dist: 0, mode: 'free' });
     flat(w);
   }
+  function boost(w) {
+    if (w.m3 === 'track') w.vs = Math.min(VMAX, Math.max(w.vs, 0) + 80);
+    else if (w.m3 === 'air') { w.vx *= 1.25; w.vz *= 1.25; }
+    else if (w.m3 === 'funnel') w.fL *= 1.3;
+    emit(w.X, -w.Y, 12, ['#3ff8ff', '#1a5cff', '#fff'], 40, 40, 100, undefined, w.Z);
+  }
   function open() { pieces[0].gate.on = false; K.doorsOpen = true; K.openT = t; }
   const time = () => t;
 
-  return { build, spawn, open, step, update, time, at, fr, W, HW };
+  return { build, spawn, open, step, update, time, at, fr, boost, W, HW };
 }

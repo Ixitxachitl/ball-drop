@@ -310,6 +310,7 @@
   // (z): pins, bumpers, hard landings and each other knock them about, and they roll past each other at
   // different depths. The 2D view keeps everything in one plane.
   const DEPTH = CFG.view === '3d', ZT = 12, ZB = ZT - RW - 1.5;
+  const RB3 = 2.75;   // (the balls' radius on the 3D course: smaller than the 2D wheels)
   const MINV = 40, VMAX = 230;     // the speed wheels roll at on their own, and the fastest they go
   const STEP = 1 / 240;
   const C = {
@@ -1072,20 +1073,40 @@
     emit((K.xl + K.xr) / 2, K.startY, 30, ['#fff', '#ffe600', '#ff3b5c'], 120, 40, 120);
     updateHud();
   }
+  // A racer's gamble: a little extra speed, or BOOM and they're out of the race.
+  function boostRacer(w) {
+    if (C3) return C3.boost(w);
+    if (w.mode !== 'free') return;
+    const t = w.contact ? [w.contact.tx, w.contact.ty] : [Math.sign(w.vx) || 1, 0];
+    w.vx += t[0] * 80; w.vy += t[1] * 80; w.boostT = 1;
+    emit(w.x, w.y, 10, [C.boostA, C.boostB, '#fff'], 50, 40, 100, undefined, w.z);
+  }
+  function blowUp(w) {
+    const c = w.pal.main;
+    emit(w.x, w.y, 30, [c, c, '#ffde59', '#ff8a00', '#fff'], 95, 130, 260, [0.4, 1.1], w.z);
+    emit(w.x, w.y, 10, ['#6a6488', '#4a4660', '#8a84a8'], 25, 25, -40, [0.6, 1.3], w.z);
+    rings.push({ x: w.x, y: w.y, r: 1, l: 0.35 });
+    popup(w.x, w.y - 9, 'BOOM', '#ffde59', w.z);
+    w.mode = 'done'; w.m3 = 'done'; w.boom = true;
+    removeBubble(w); refreshLive();
+    // (and if that was the last one still going, the race is over)
+    if (![...racers.values()].some(r => r.mode !== 'done' && !r.rank)) endAt = Math.min(endAt || Infinity, performance.now() + 3000);
+  }
   function finish(w) {
-    w.mode = 'done'; finished.push(w); w.rank = finished.length; w.time = simT - raceT0;
+    // (in 3D they stay, rolling on into the tray at the end)
+    w.mode = C3 ? 'home' : 'done'; finished.push(w); w.rank = finished.length; w.time = simT - raceT0;
     refreshLive();
     if (SIM) return;
     removeBubble(w);
     if (C3) popup(w.x, w.y - 14, ordinal(w.rank), w.rank === 1 ? '#ffd84a' : '#fffaf0', w.z);
     else popup((K.goal.xa + K.goal.xb) / 2, K.goal.y - 22, ordinal(w.rank), w.rank === 1 ? '#ffd84a' : '#fffaf0');
-    emit(w.x, K.goal.y, w.rank === 1 ? 40 : 12, [w.pal.main, '#fff', '#ffd84a'], 80, 120, 200, [0.5, 1.2]);
+    emit(w.x, C3 ? w.y : K.goal.y, w.rank === 1 ? 40 : 12, [w.pal.main, '#fff', '#ffd84a'], 80, 120, 200, [0.5, 1.2], w.z);
     const now = performance.now();
     if (w.rank === 1) {
       winner = w; showWinner(w); celebrate();
       endAt = now + CFG.finish * 1000;
     }
-    if (finished.length >= racers.size) endAt = Math.min(endAt, now + 3000);
+    if (![...racers.values()].some(r => r.mode !== 'done' && !r.rank)) endAt = Math.min(endAt, now + 3000);
     updateHud();
   }
   const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'TH' : ['TH', 'ST', 'ND', 'RD'][n % 10] || 'TH');
@@ -1442,14 +1463,14 @@
       const x0 = Math.round(s.ax), x1 = Math.round(s.bx), yy = x => Math.round(s.ay + (s.by - s.ay) * (x + 0.5 - s.ax) / (s.bx - s.ax));
       if (s.boost) {
         for (let x = x0; x < x1; x++) for (let row = 0; row < 2; row++) {
-          const ph = (((x * s.flow - row - t * 70) % 6) + 6) % 6;
+          const ph = (((x * s.flow - row - t * 18) % 6) + 6) % 6;   // (slowly: fast stripes flicker)
           px(x, yy(x) + row, ph < 3 ? C.boostA : C.boostB);
         }
-        if (((t * 6) | 0) & 1) for (let x = x0; x < x1; x += 3) px(x, yy(x) - 1, 'rgba(63,248,255,0.5)');
+        for (let x = x0; x < x1; x += 3) px(x, yy(x) - 1, 'rgba(63,248,255,0.35)');
       } else if (s.belt) {
         // a conveyor: a dark belt with its treads creeping along, rollers at each end
         for (let x = x0; x < x1; x++) {
-          const y = yy(x), ph = (((x - t * s.belt * s.flow) % 4) + 4) % 4;
+          const y = yy(x), ph = (((x - t * s.belt * s.flow * 0.25) % 4) + 4) % 4;
           px(x, y, ph < 2 ? '#e8e6f4' : '#3a2c40'); px(x, y + 1, '#2a1c30');
         }
         for (const x of [x0, x1 - 1]) { const y = yy(x); ctx.fillStyle = '#5a5470'; ctx.fillRect(x - 1, y + 1, 3, 3); px(x, y + 2, '#ffd84a'); }
@@ -1940,6 +1961,7 @@
     if (isOwner && platform !== 'demo') ownerSeen(key, nm, color);
     if (cmd === CFG.joincmd) { join(key, nm, color); return; }
     if (cmd === CFG.startcmd) { if (isOwner || mod) startRace(); return; }
+    if (cmd === '!boost') { const w = racers.get(key); if (w && state === 'race' && w.mode !== 'done' && !w.rank && simT - (w.boostAt ?? -9) > 3) { w.boostAt = simT; Math.random() < 0.5 ? boostRacer(w) : blowUp(w); } return; }
     if (cmd === CFG.camcmd) { if ((isOwner || mod) && R3) R3.command(plain.slice(cmd.length).trim()); return; }
     const w = racers.get(key);
     if (!w || w.mode === 'done' || plain.startsWith('!')) return;
@@ -1967,7 +1989,7 @@
       get K() { return K; }, get live() { return live; }, get racers() { return racers; }, get state() { return state; },
       get simT() { return simT; }, get W() { return W; }, get H() { return H; }, get finished() { return finished; },
       get winner() { return winner; }, get raceT0() { return raceT0; }, get C3() { return C3; },
-      parts, pops, FW, RW, ZT, CFG, C, SYMS, CHIP_COLS, shade, domAngle,
+      parts, pops, FW, RW: C3 ? RB3 : RW, ZT, CFG, C, SYMS, CHIP_COLS, shade, domAngle,
       dieArt: face => bake(7, 7, () => drawDie(0, 0, face)),
       spriteArt: kind => bake(5, 6, () => sprite(SPR[kind], 0, 0)),
       textArt: (text, c) => bake(nchars(text) * 4 + 3, 7, () => drawText(text, (nchars(text) * 4 + 3) / 2, 1, c)),
@@ -2447,7 +2469,7 @@
       const ws = [...racers.values()];
       out.push({ W, H, floors: K.bands.map(b => b.kind).join(','), first: +(finished[0]?.time ?? -1).toFixed(1), last: +(finished.at(-1)?.time ?? -1).toFixed(1),
         done: finished.length, kicks: ws.reduce((a, w) => a + w.kicks, 0), warps: ws.reduce((a, w) => a + w.warps, 0),
-        loops: K.bands.reduce((a, b) => a + b.loops.length, 0), pipes: K.pipes?.length, stuck: K.stuck, course: K.pieces?.map(p => p.kind).join(','), traps: K.traps.length, hops: K.hops.length });
+        loops: K.bands.reduce((a, b) => a + b.loops.length, 0), pipes: K.pipes?.length, stuck: K.stuck, course: K.pieces?.map(p => p.kind).join(','), left: ws.filter(w => w.mode !== 'done').map(w => [w.m3, K.pieces?.[w.pi]?.kind, w.pi, Math.round(w.s || 0), w.frad && +w.frad.toFixed(1), w.fL | 0, w.fh && +w.fh.toFixed(1), w.Y | 0, w.land]), traps: K.traps.length, hops: K.hops.length });
     }
     const pre = document.createElement('pre'); pre.id = 'selftest'; pre.textContent = JSON.stringify(out);
     document.body.appendChild(pre);
@@ -2458,7 +2480,7 @@
   // In 3D the race runs on its own course (course3d.js) before anything's built; if that can't load, it's 2D.
   resize();
   const ready = DEPTH
-    ? import('./course3d.js').then(m => { C3 = m.createCourse({ RW, G, emit, popup, SYMS, knockDominoes, onFinish: w => { w.m3 = 'done'; finish(w); } }); })
+    ? import('./course3d.js').then(m => { C3 = m.createCourse({ RW: RB3, G, emit, popup, SYMS, knockDominoes, onFinish: w => finish(w) }); })
       .catch(e => console.warn("[drop] the 3D course didn't load, so it's 2D", e))
     : Promise.resolve();
   ready.then(boot);
