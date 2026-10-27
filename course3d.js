@@ -5,7 +5,8 @@
 // The track is built like a turtle drawing: a start, then one piece after another, each carrying on from
 // where the last left off: straights, banked turns, helixes spiralling down, corkscrew loops, jumps (a
 // conveyor feeds the lip, so everyone flies the same way), glass funnels the balls spiral down through onto
-// the track below, roulette wheels they spin round and settle into a pocket of, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
+// the track below, roulette wheels they spin round and settle into a pocket of, halfpipes they swing from
+// wall to wall down, whack-a-mole fields of moles popping up, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
 // of dice, chips and bumpers to weave between, and lane splits with something different down each side,
 // then a finish arch. It turns back toward the middle before it wanders too far, and a piece that would run
 // into track already there is built some other way.
@@ -119,6 +120,19 @@ export function createCourse(g) {
     return p;
   }
 
+  // A halfpipe's cross-section: flat along the bottom, its walls curving up to nearly vertical at the sides;
+  // at each end it eases out of (and back into) ordinary flat track. The height off the track at u, how
+  // steep it is there and how fast that changes; and how far across a ball can go.
+  const PIPE = { fb: 6, R: HW - 6, ramp: 30 };
+  const pipeM = (p, s) => smooth(clamp(Math.min(s, p.len - s) / PIPE.ramp, 0, 1));
+  function pipeH(p, s, u) {
+    const m = pipeM(p, s), d = Math.abs(u) - PIPE.fb, R = PIPE.R;
+    if (d <= 0 || m === 0) return [0, 0, 0];
+    const q = Math.sqrt(Math.max(1e-4, R * R - Math.min(d, R) ** 2));
+    return [m * (R - q), m * Math.sign(u) * d / q, m * R * R / (q * q * q)];
+  }
+  const ubAt = (p, s) => p.pipe ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : UB;
+
   // ---- what goes on the track ----
   const post = (p, s, u, r, kind, o = {}) => p.obs.push({ s, u, r, kind, e: 0.5, lit: 0, ...o });
   const bumper = (p, s, u) => post(p, s, u, 4.5, 'bumper', { kick: 95, e: 0.6 });
@@ -173,7 +187,7 @@ export function createCourse(g) {
   }
 
   // ---- features: one or more pieces that carry on from the turtle ----
-  const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2 };
+  const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
@@ -231,6 +245,16 @@ export function createCourse(g) {
       tur = { x: cx, y: cy - F.H - 30, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: 0 };
       lead.gapTo = out.length;
       dress(add(catcher(130)));
+    } else if (kind === 'halfpipe') {
+      // a U-shaped run that snakes gently, so the balls swing up one wall and across to the other
+      const len = rnd(200, 260), waves = pick([1.5, 2, 2.5]), A = rnd(0.3, 0.42), y0 = tur.yaw, p0 = tur.pitch, pitch1 = -rnd(0.08, 0.12);
+      add(sweep('halfpipe', len, f => [y0 + A * Math.sin(TAU * waves * f), ease(p0, pitch1, f * 2.5), 0], { pipe: true, style: 'pipe' }));
+      add(straight(40, -0.06));
+    } else if (kind === 'moles') {
+      // whack-a-mole: rows of holes, two across then one in the middle, with moles popping up out of them
+      const p = add(straight(rnd(130, 160), -0.12, { kind: 'moles' }));
+      for (let s = 30, row = 0; s < p.len - 20; s += 13, row++) for (const u of row % 2 ? [0] : [-7.2, 7.2]) post(p, s, u, 3.2, 'mole', { e: 0.5, up: 0, next: rnd(0.3, 3), until: 0, rose: -9 });
+      add(straight(30, -0.06));
     } else if (kind === 'plinko') {
       const p = add(straight(rnd(150, 190), -0.36, { kind: 'plinko' }));
       pins(p, 55, p.len - 12);
@@ -314,7 +338,7 @@ export function createCourse(g) {
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const p of pieces) for (let i = 0; i < p.n; i++) for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j], p.P[i * 3 + j]); hi[j] = Math.max(hi[j], p.P[i * 3 + j]); }
     K = {
-      three: true, stuck: {}, pieces, total, wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
+      three: true, stuck: {}, pieces, total, PIPE, moles: pieces.flatMap(p => p.obs.filter(o => o.kind === 'mole')), wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
       flippers: pieces.flatMap(p => p.flips || []), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
@@ -350,7 +374,9 @@ export function createCourse(g) {
   // the ball's place in the world, from where it is on its piece (index.html's y points down, so -Y)
   function place3(w) {
     const p = pieces[w.pi], f = at(p, w.s, w.fr ??= fr());
-    w.X = f.P[0] + f.B[0] * w.u + f.N[0] * RW; w.Y = f.P[1] + f.B[1] * w.u + f.N[1] * RW; w.Z = f.P[2] + f.B[2] * w.u + f.N[2] * RW;
+    let b = w.u, n = RW;
+    if (p.pipe) { const [h, h1] = pipeH(p, w.s, w.u), l = Math.hypot(1, h1); b -= h1 / l * RW; n = h + RW / l; }   // (up a halfpipe's wall, out from it square to it)
+    w.X = f.P[0] + f.B[0] * b + f.N[0] * n; w.Y = f.P[1] + f.B[1] * b + f.N[1] * n; w.Z = f.P[2] + f.B[2] * b + f.N[2] * n;
     w.x = w.X; w.y = -w.Y; w.z = w.Z;
   }
   const flat = w => { w.x = w.X; w.y = -w.Y; w.z = w.Z; };
@@ -412,15 +438,24 @@ export function createCourse(g) {
       if (w.vs < MINV) w.vs += Math.min(MINV - w.vs, 240 * dt);
       else if (w.vs > MINV + 30) w.vs -= (w.vs - MINV) * 0.22 * dt;
     }
-    w.vu += au * dt; w.vu *= 1 - 0.7 * dt;
+    if (p.pipe) { const [, h1, h2] = pipeH(p, w.s, w.u); au = (au - G * ROLL * f.N[1] * h1 - h1 * h2 * w.vu * w.vu) / (1 + h1 * h1); }
+    w.vu += au * dt; w.vu *= 1 - (p.pipe ? 0.25 : 0.7) * dt;
     for (const r of p.regions) if (w.s >= r.a && w.s < r.b && (r.u0 == null || (w.u >= r.u0 && w.u <= r.u1))) {
       if (r.belt) { w.vs = r.belt; w.vu *= 1 - 4 * dt; }
       else if (r.boost && w.vs < r.boost) { w.vs = r.boost; if (!w.boostT) emit(w.X, -w.Y, 8, ['#3ff8ff', '#1a5cff', '#fff'], 40, 30, 100, undefined, w.Z); w.boostT = 0.8; }
     }
     const sp = Math.hypot(w.vs, w.vu); if (sp > VMAX) { w.vs *= VMAX / sp; w.vu *= VMAX / sp; }
     w.s += w.vs * dt; w.u += w.vu * dt;
-    if (Math.abs(w.u) > UB) { w.u = Math.sign(w.u) * UB; if (w.vu * w.u > 0) w.vu *= -0.45; }
-    for (const o of p.obs) if (Math.abs(o.s - w.s) < o.r + RW + 1) hitPost(w, o);
+    const ub = ubAt(p, w.s);
+    if (Math.abs(w.u) > ub) { w.u = Math.sign(w.u) * ub; if (w.vu * w.u > 0) w.vu *= p.pipe ? 0 : -0.45; }
+    for (const o of p.obs) if (Math.abs(o.s - w.s) < o.r + RW + 1) {
+      if (o.kind === 'mole') {
+        if (o.up < 0.4) continue;   // (down its hole)
+        // just popped up under it: BONK, up in the air
+        if (t - o.rose < 0.3 && racing && Math.hypot(w.s - o.s, w.u - o.u) < o.r + RW * 0.6 && t - (w.bonk ?? -9) > 1) { bonk(w, p, o); return; }
+      }
+      hitPost(w, o);
+    }
     for (const sg of p.segs) if (sg.on !== false) hitSeg(w, sg);
     for (const F of p.flips || []) hitSeg(w, F.seg);
     if (racing) for (const D of p.doms) if (D.start < 0 && Math.abs(w.u - D.side * EDGE) < RW + 2) {
@@ -443,6 +478,15 @@ export function createCourse(g) {
     w.dist = pieces[w.pi].s0 + w.s;
     if (racing && !w.rank && w.pi === K.goalPiece.i && w.s >= K.finishS) onFinish(w);
   }
+  function bonk(w, p, o) {
+    w.bonk = t; o.lit = 1;
+    const f = at(p, w.s, F1);
+    w.vs = Math.max(w.vs, 60) + 20; w.vu = w.vu * 0.5 + (w.u - o.u >= 0 ? 1 : -1) * rnd(4, 12);
+    toAir(w, f); w.land = p.i;
+    w.vx += f.N[0] * 75; w.vy += f.N[1] * 75; w.vz += f.N[2] * 75;
+    emit(w.X, -w.Y, 10, ['#8a5a3a', '#e8d9b0', '#fff'], 40, 50, 160, undefined, w.Z);
+    popup(w.X, -w.Y - 8, 'BONK', '#ffe600', w.Z);
+  }
   function toAir(w, f) {
     w.m3 = 'air';
     w.vx = w.vs * f.T[0] + w.vu * f.B[0]; w.vy = w.vs * f.T[1] + w.vu * f.B[1]; w.vz = w.vs * f.T[2] + w.vu * f.B[2];
@@ -458,6 +502,7 @@ export function createCourse(g) {
     const h = dx * p.N[bi * 3] + dy * p.N[bi * 3 + 1] + dz * p.N[bi * 3 + 2] - RW;
     const u = dx * p.B[bi * 3] + dy * p.B[bi * 3 + 1] + dz * p.B[bi * 3 + 2];
     const s = bi * p.ds + dx * p.T[bi * 3] + dy * p.T[bi * 3 + 1] + dz * p.T[bi * 3 + 2];
+    if (s >= p.len && !p.end && p.i + 1 < pieces.length) { w.land = p.i + 1; flat(w); return; }   // (flying on past it: down onto the next)
     if (h <= 0 && Math.abs(u) < HW + 8 && s > -14 && s < p.len) {
       w.m3 = 'track'; w.pi = p.i; w.s = clamp(s, 0, p.len - 0.1); w.u = clamp(u, -UB, UB);
       w.vs = w.vx * p.T[bi * 3] + w.vy * p.T[bi * 3 + 1] + w.vz * p.T[bi * 3 + 2];
@@ -557,6 +602,12 @@ export function createCourse(g) {
   // the flippers, swinging up now and then; the roulette wheels turning; and the start gate
   function movers(dt) {
     for (const F of K.wheels) F.rot += F.om * dt;
+    for (const o of K.moles) {
+      if (!o.until && t >= o.next) { o.until = t + rnd(0.7, 1.5); o.rose = t; }
+      if (o.until && t < o.until) o.up = Math.min(1, o.up + 9 * dt);
+      else { o.up = Math.max(0, o.up - 4 * dt); if (o.until && o.up === 0) { o.until = 0; o.next = t + rnd(0.8, 3.2); } }
+      o.lit = Math.max(0, o.lit - 3 * dt);
+    }
     for (const F of K.flippers) {
       if (F.st === 0 && t >= F.next) F.st = 1;
       const was = F.a;
@@ -597,7 +648,7 @@ export function createCourse(g) {
         if (isVel) { w.fvr += dr; w.fL += w.frad * dt2; } else { w.frad = clamp(w.frad + dr, w.F.rs + 0.5, w.F.R - RW - 0.6); w.fth += dt2 / w.frad; }
       } else if (w.m3 === 'track') {
         const ds = x * w.fr.T[0] + y * w.fr.T[1] + z * w.fr.T[2], du = x * w.fr.B[0] + y * w.fr.B[1] + z * w.fr.B[2];
-        if (isVel) { w.vs += ds; w.vu += du; } else { w.s += ds; w.u = clamp(w.u + du, -UB, UB); }
+        if (isVel) { w.vs += ds; w.vu += du; } else { const ub = ubAt(pieces[w.pi], w.s); w.s += ds; w.u = clamp(w.u + du, -ub, ub); }
       } else if (isVel) { w.vx += x; w.vy += y; w.vz += z; } else { w.X += x; w.Y += y; w.Z += z; }
     };
     const va = [0, 0, 0], vb = [0, 0, 0];

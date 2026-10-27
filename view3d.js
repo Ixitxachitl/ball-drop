@@ -135,33 +135,38 @@ export function create(g) {
   }
 
   // Sweeps a cross-section (points [u, h], u across the track, h up off it) along samples a..b of piece p,
-  // as one mesh. Faces point outward from the middle of the cross-section; `closed` joins its last point
-  // back to its first; `su` stretches the texture along the track (repeats per unit).
+  // as one mesh; the cross-section can be a function of the sample, i, if it changes along the piece (the
+  // same number of points all along). `closed` joins its last point back to its first, and caps both ends;
+  // its faces point out of it. An open one's faces point away from its middle. `su` stretches the texture
+  // along the track (repeats per unit).
   function sweep(p, profile, closed, a = 0, b = p.n - 1, su = 0.1) {
-    const pos = [], uv = [], E = closed ? profile.length : profile.length - 1;
-    let cu = 0, ch = 0; for (const [u, h] of profile) { cu += u / profile.length; ch += h / profile.length; }
-    const pt = (i, k) => { const [u, h] = profile[k % profile.length], j = i * 3; return [p.P[j] + p.B[j] * u + p.N[j] * h, p.P[j + 1] + p.B[j + 1] * u + p.N[j + 1] * h, p.P[j + 2] + p.B[j + 2] * u + p.N[j + 2] * h]; };
-    for (let i = a; i < b; i++) for (let k = 0; k < E; k++) {
-      const q = [pt(i, k), pt(i + 1, k), pt(i + 1, k + 1), pt(i, k + 1)];
-      // which way is out: from the middle of the cross-section toward this edge
-      const [u0, h0] = profile[k], [u1, h1] = profile[(k + 1) % profile.length], mu = (u0 + u1) / 2 - cu, mh = (h0 + h1) / 2 - ch, j = i * 3;
-      const ox = p.B[j] * mu + p.N[j] * mh, oy = p.B[j + 1] * mu + p.N[j + 1] * mh, oz = p.B[j + 2] * mu + p.N[j + 2] * mh;
-      const e1 = q[1].map((v, n) => v - q[0][n]), e2 = q[3].map((v, n) => v - q[0][n]);
-      const cx = e1[1] * e2[2] - e1[2] * e2[1], cy = e1[2] * e2[0] - e1[0] * e2[2], cz = e1[0] * e2[1] - e1[1] * e2[0];
-      const order = cx * ox + cy * oy + cz * oz >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
-      const s0 = i * p.ds * su, s1 = (i + 1) * p.ds * su, uvq = [[s0, 0], [s1, 0], [s1, 1], [s0, 1]];
-      for (const o of order) { pos.push(...q[o]); uv.push(...uvq[o]); }
-    }
-    // a closed one is capped at both ends, facing back and on along the track (so it's solid seen end-on)
-    if (closed) for (const [i, dir] of [[a, -1], [b, 1]]) {
-      const j = i * 3, c = [p.P[j] + p.B[j] * cu + p.N[j] * ch, p.P[j + 1] + p.B[j + 1] * cu + p.N[j + 1] * ch, p.P[j + 2] + p.B[j + 2] * cu + p.N[j + 2] * ch];
-      for (let k = 0; k < profile.length; k++) {
-        let q1 = pt(i, k), q2 = pt(i, k + 1);
-        const e1 = q1.map((v, n) => v - c[n]), e2 = q2.map((v, n) => v - c[n]);
-        const nT = (e1[1] * e2[2] - e1[2] * e2[1]) * p.T[j] + (e1[2] * e2[0] - e1[0] * e2[2]) * p.T[j + 1] + (e1[0] * e2[1] - e1[1] * e2[0]) * p.T[j + 2];
-        if (nT * dir < 0) [q1, q2] = [q2, q1];
-        pos.push(...c, ...q1, ...q2); uv.push(i * p.ds * su, 0.5, i * p.ds * su, 0, i * p.ds * su, 1);
+    const prof = typeof profile === 'function' ? profile : () => profile, pos = [], uv = [];
+    const at = (i, [u, h]) => { const j = i * 3; return [p.P[j] + p.B[j] * u + p.N[j] * h, p.P[j + 1] + p.B[j + 1] * u + p.N[j + 1] * h, p.P[j + 2] + p.B[j + 2] * u + p.N[j + 2] * h]; };
+    const tri = (q1, q2, q3, out, uvs) => {   // (wound to face along `out`)
+      const e1 = q2.map((v, n) => v - q1[n]), e2 = q3.map((v, n) => v - q1[n]);
+      const d = (e1[1] * e2[2] - e1[2] * e2[1]) * out[0] + (e1[2] * e2[0] - e1[0] * e2[2]) * out[1] + (e1[0] * e2[1] - e1[1] * e2[0]) * out[2];
+      if (d >= 0) { pos.push(...q1, ...q2, ...q3); uv.push(...uvs[0], ...uvs[1], ...uvs[2]); }
+      else { pos.push(...q1, ...q3, ...q2); uv.push(...uvs[0], ...uvs[2], ...uvs[1]); }
+    };
+    for (let i = a; i < b; i++) {
+      const c0 = prof(i), c1 = prof(i + 1), L = c0.length, E = closed ? L : L - 1, j = i * 3;
+      // (which way's out: by the way round it's drawn if it's closed, or from its middle if not)
+      let area = 0, cu = 0, ch = 0;
+      for (let k = 0; k < L; k++) { const [u0, h0] = c0[k], [u1, h1] = c0[(k + 1) % L]; area += u0 * h1 - u1 * h0; cu += u0 / L; ch += h0 / L; }
+      for (let k = 0; k < E; k++) {
+        const [u0, h0] = c0[k], [u1, h1] = c0[(k + 1) % L];
+        let nu, nh;
+        if (closed) { nu = (h1 - h0) * Math.sign(area); nh = -(u1 - u0) * Math.sign(area); } else { nu = (u0 + u1) / 2 - cu; nh = (h0 + h1) / 2 - ch; }
+        const out = [p.B[j] * nu + p.N[j] * nh, p.B[j + 1] * nu + p.N[j + 1] * nh, p.B[j + 2] * nu + p.N[j + 2] * nh];
+        const q = [at(i, c0[k]), at(i + 1, c1[k]), at(i + 1, c1[(k + 1) % L]), at(i, c0[(k + 1) % L])];
+        const s0 = i * p.ds * su, s1 = (i + 1) * p.ds * su, t = [[s0, 0], [s1, 0], [s1, 1], [s0, 1]];
+        tri(q[0], q[1], q[2], out, [t[0], t[1], t[2]]); tri(q[0], q[2], q[3], out, [t[0], t[2], t[3]]);
       }
+    }
+    // the ends of a closed one, capped, facing back and on along the track (so it's solid seen end-on)
+    if (closed) for (const [i, dir] of [[a, -1], [b, 1]]) {
+      const c = prof(i), j = i * 3, out = [p.T[j] * dir, p.T[j + 1] * dir, p.T[j + 2] * dir], sv = i * p.ds * su;
+      for (const [x, y, z] of THREE.ShapeUtils.triangulateShape(c.map(([u, h]) => new THREE.Vector2(u, h)), [])) tri(at(i, c[x]), at(i, c[y]), at(i, c[z]), out, [[sv, 0], [sv, 0.5], [sv, 1]]);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -177,14 +182,32 @@ export function create(g) {
   function rebuild() {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
-    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], gate: null, solid: [] };
+    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], gate: null, solid: [] };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     const add = (geo, mat) => { let l = lists.get(mat); if (!l) lists.set(mat, l = []); l.push(geo); };
 
     // the track, piece by piece, in whatever it's made of there
     for (const p of K.pieces) {
       const st = p.style;
-      if (st === 'girder') {
+      if (p.pipe) {
+        // a halfpipe: a shell with a U down the middle (the same shape the balls roll on, see course3d.js's
+        // pipeH), easing in from flat track at each end, its inside surfaced and steel coping along the top
+        const { fb, R, ramp } = K.PIPE, n = 9;
+        const mAt = i => { const x = clamp(Math.min(i * p.ds, p.len - i * p.ds) / ramp, 0, 1); return x * x * (3 - 2 * x); };
+        const inner = (i, off) => {
+          const m = mAt(i), out = [];
+          for (let k = 0; k < 2 * n; k++) {
+            const sd = k < n ? -1 : 1, th = (k < n ? n - 1 - k : k - n) / (n - 1) * Math.PI / 2;
+            let nu = -sd * m * Math.sin(th), nh = Math.cos(th); const l = Math.hypot(nu, nh); nu /= l; nh /= l;
+            out.push([sd * (fb + R * Math.sin(th)) + nu * off, m * R * (1 - Math.cos(th)) + nh * off]);
+          }
+          return out;
+        };
+        const top = i => Math.max(3, mAt(i) * R) + 0.6;
+        add(sweep(p, i => [...inner(i, 0), [HW, top(i)], [HW + 1.2, top(i)], [HW + 1.2, -3], [-HW - 1.2, -3], [-HW - 1.2, top(i)], [-HW, top(i)]], true), lam(C.body));
+        add(sweep(p, i => [...inner(i, 0.06), ...inner(i, -0.3).reverse()], true), lam(C.top));
+        for (const sd of [-1, 1]) add(sweep(p, i => rect(sd * HW - 0.5, sd * HW + 0.7, top(i) - 0.3, top(i) + 0.5), true), STEEL);
+      } else if (st === 'girder') {
         add(sweep(p, rect(-HW, HW, -1.4, 0), true), lam('#e8344e'));
         add(sweep(p, rect(-1.3, 1.3, -6, -1.4), true), lam('#a3203a'));
         add(sweep(p, rect(-HW * 0.7, HW * 0.7, -7.2, -6), true), lam('#e8344e'));
@@ -252,6 +275,26 @@ export function create(g) {
         if (o.kind === 'pin') { world.add(onTrack(mesh(pinGeo, STEEL), p, o.s, o.u), onTrack(mesh(capGeo, BRASS), p, o.s, o.u)); }
         else if (o.kind === 'die') { const e = o.r * Math.SQRT2, d = onTrack(mesh(new THREE.BoxGeometry(e, e, e).translate(0, e / 2, 0), dieMats), p, o.s, o.u); d.rotateY(rnd(0, TAU)); world.add(d); }   // (its corners reach just as far as balls bounce off it)
         else if (o.kind === 'chip') for (let i = 0; i < (o.h || 3); i++) world.add(onTrack(mesh(new THREE.CylinderGeometry(3.8, 3.8, 1.9, 20).translate(0, 1 + i * 2, 0), chipMat(g.CHIP_COLS[(i + Math.round(o.s)) % g.CHIP_COLS.length])), p, o.s, o.u));
+        else if (o.kind === 'mole') {
+          // a hole, and a mole that pops up out of it, facing up the track at the balls coming
+          world.add(onTrack(mesh(new THREE.CylinderGeometry(o.r + 0.7, o.r + 0.7, 0.12, 24).translate(0, 0.06, 0), lam('#0e0a14')), p, o.s, o.u));
+          world.add(onTrack(mesh(new THREE.TorusGeometry(o.r + 0.7, 0.35, 6, 24).rotateX(Math.PI / 2).translate(0, 0.15, 0), lam('#5a3a24')), p, o.s, o.u));
+          const mole = onTrack(new THREE.Group(), p, o.s, o.u), body = new THREE.Group(); mole.add(body);
+          const fur = lam('#5e5058'), dark = lam('#120e18'), pink = lam('#f08aa0');
+          body.add(mesh(new THREE.CylinderGeometry(o.r - 0.2, o.r, 4.5, 20).translate(0, 2.25, 0), fur));
+          body.add(mesh(new THREE.SphereGeometry(o.r - 0.2, 20, 10, 0, TAU, 0, Math.PI / 2).translate(0, 4.5, 0), fur));
+          body.add(mesh(new THREE.SphereGeometry(1.3, 12, 8).scale(0.6, 0.8, 1).translate(-2.3, 3.6, 0), lam('#d8b08a')));   // (snout)
+          body.add(mesh(new THREE.SphereGeometry(0.55, 10, 8).translate(-3.0, 4.0, 0), lam('#ff7a9a')));
+          for (const z of [-1.1, 1.1]) body.add(mesh(new THREE.SphereGeometry(0.45, 8, 6).translate(-2.45, 5.5, z), dark));
+          body.add(mesh(new THREE.BoxGeometry(0.2, 0.7, 0.9).translate(-2.9, 2.8, 0), lam('#fffaf0')));
+          // big pink digging paws with claws, gripping the rim of the hole, and whiskers
+          for (const z of [-1.7, 1.7]) {
+            body.add(mesh(new THREE.SphereGeometry(1.2, 12, 8).scale(1.1, 0.45, 1).translate(-o.r - 0.1, 1.2, z), pink));
+            for (const c of [-0.6, 0, 0.6]) body.add(mesh(new THREE.ConeGeometry(0.18, 0.8, 6).rotateZ(Math.PI / 2).translate(-o.r - 1.5, 1.2, z + c), lam('#fffaf0')));
+          }
+          for (const z of [-1, 1]) for (const a of [-0.25, 0.15]) body.add(mesh(new THREE.BoxGeometry(0.08, 0.08, 2.2).rotateX(a).translate(-2.8, 4.0, z * 1.5), dark));
+          world.add(mole); D.moles.push({ o, body });
+        }
         else if (o.kind === 'bumper') {
           const m = onTrack(mesh(new THREE.CylinderGeometry(o.r, o.r, 6, 24).translate(0, 3, 0), BUMP[0]), p, o.s, o.u);
           world.add(m, onTrack(mesh(new THREE.CylinderGeometry(o.r * 0.6, o.r * 0.8, 1.5, 16).translate(0, 0.75, 0), IRON2), p, o.s, o.u));
@@ -563,7 +606,8 @@ export function create(g) {
     });
     for (const { c, inner } of D.cones) inner.rotation.z = c.hit ? -c.dir * Math.min(Math.PI / 2, (ct - c.hit) * 8) : 0;
     for (const { m, sp, ph } of D.cogs) m.rotation.z = ph + t * sp;
-    for (const { F, rotor } of D.wheels) rotor.rotation.y = -F.rot;   // (three's y turn goes the other way round)
+    for (const { F, rotor } of D.wheels) rotor.rotation.y = -F.rot;
+    for (const { o, body } of D.moles) { body.visible = o.up > 0.01; body.scale.y = Math.max(0.01, o.up); }   // (popping up out of its hole)   // (three's y turn goes the other way round)
     for (const { S, reels, lever, bulbs } of D.slots) {
       S.reels.forEach((r, i) => {
         const R = reels[i], spin = r.until > ct;

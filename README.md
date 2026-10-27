@@ -36,8 +36,9 @@ Set **View** to **3D** in the settings (or add `?view=3d`) for a 3D race instead
 continuous track that winds through space, built fresh every race (`course3d.js`) and drawn with three.js
 (`view3d.js`, loaded from jsDelivr). It has banked turns and switchbacks, helixes spiralling down, corkscrew
 loops, jumps fed by a conveyor, glass funnels the balls spiral down through onto the track below,
-roulette wheels they spin round and settle into a pocket of (red's a boost, green 0 a bigger one), a
-pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts of dice, chips and
+roulette wheels they spin round and settle into a pocket of (red's a boost, green 0 a bigger one),
+halfpipes they swing from wall to wall down, whack-a-mole stretches where moles pop up and bonk them into
+the air, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts of dice, chips and
 bumpers to weave between, lane splits with a boost pad down one side and a slow conveyor down the other,
 bumpers along the rails that knock balls back into the action, dominoes, and slot machines whose levers the
 balls pull as they pass (7-7-7 pays out a boost). Finished balls roll on into a tray past the checkered line.
