@@ -230,18 +230,22 @@ export function createCourse(g) {
       dress(add(catcher(130)));
     } else if (kind === 'roulette') {
       // A roulette wheel, fed along its rim like a funnel: the balls roll round the sloping ball track,
-      // slowing, drop onto the spinning wheel, bounce over a few pockets and settle in one, ride it round,
-      // then go down through it and out under the wheel onto a catcher below. Red's a boost, green (0) a
-      // bigger one, black nothing. (See stepFunnel and stepPocket.)
+      // slowing, drop onto the spinning wheel, bounce over a few pockets and settle in one, and ride it
+      // round till a trap door in the bottom of the pocket drops them into a glass funnel under the wheel,
+      // which spirals them down and out onto a catcher below. Red's a boost, green (0) a bigger one, black
+      // nothing. (See stepFunnel and stepPocket.)
       const lead = add(straight(60, -0.02));
       const R = 2 * HW + rnd(22, 28), yaw = tur.yaw, side = pick([-1, 1]), re = R - HW - 4, k = 0.32;
       const cx = tur.x - Math.sin(yaw) * side * re, cz = tur.z + Math.cos(yaw) * side * re, cy = tur.y - 4;
       // the wheel's edge, where its pockets are, and the cone in its middle the balls bounce off
       const Rr = R * 0.75, Rp = Rr * 0.81, Rh = Rr * 0.72;
-      const F = { wheel: true, cx, cy, cz, R, Rr, Rp, Rh, rs: Rh + RW, k, yR: cy - k * (R - Rr) - 0.3, H: 22, rot: rnd(0, TAU), om: 0.9 * pick([-1, 1]), held: [] };
+      const F = { wheel: true, cx, cy, cz, R, Rr, Rp, Rh, rs: Rh + RW, k, yR: cy - k * (R - Rr) - 0.3, H: 40, rot: rnd(0, TAU), om: 0.9 * pick([-1, 1]), held: [], doors: [] };
+      // the funnel under the wheel: its rim just under the pockets, its spout where the wheel's chute was
+      const ur = Rp + 4, uy = F.yR - 3.5, uh = uy - (cy - F.H), urs = 2 * RW + 1;
+      F.under = { cx, cy: uy, cz, R: ur, rs: urs, H: uh, Kf: uh / (ur / urs - 1) };
       lead.end = 'funnel'; lead.fun = F;
       lead.extra = [];
-      for (let k2 = 0; k2 < 24; k2++) for (const [rr, yy] of [[R + 4, cy], [Rr, F.yR], [Rh * 0.6, cy - F.H]]) lead.extra.push([cx + Math.cos(k2 / 24 * TAU) * rr, yy, cz + Math.sin(k2 / 24 * TAU) * rr]);
+      for (let k2 = 0; k2 < 24; k2++) for (const [rr, yy] of [[R + 4, cy], [Rr, F.yR], [ur * 0.5, uy - uh * 0.6], [urs, cy - F.H]]) lead.extra.push([cx + Math.cos(k2 / 24 * TAU) * rr, yy, cz + Math.sin(k2 / 24 * TAU) * rr]);
       tur = { x: cx, y: cy - F.H - 30, z: cz, yaw: Math.atan2(-cz, -cx) + rnd(-0.8, 0.8), pitch: 0 };
       lead.gapTo = out.length;
       dress(add(catcher(130)));
@@ -583,7 +587,7 @@ export function createCourse(g) {
         const j = Math.round(P.phi / SLOT), i = ((j % 37) + 37) % 37;
         if (F.held[i]?.pocket) P.phd = (Math.sign(P.phd) || 1) * 0.9;   // (taken: on to the next)
         else {
-          F.held[i] = w; P.to = j * SLOT; P.n = WHEEL[i]; P.at = t;
+          F.held[i] = w; P.i = i; P.to = j * SLOT; P.n = WHEEL[i]; P.at = t;
           const c = pocketColor(P.n);
           w.rBoost = c === 'green' ? 230 : c === 'red' ? 160 : 0;
           popup(w.X, -w.Y - 8, P.n + ' ' + c.toUpperCase(), { green: '#3fdc7a', red: '#ff3b5c', black: '#e8e6f4' }[c], w.Z);
@@ -592,7 +596,14 @@ export function createCourse(g) {
       }
     } else {
       P.phi += (P.to - P.phi) * Math.min(1, 8 * dt);
-      if (t - P.at > 1.4) return spout(w);
+      // its trap door swings open, and it drops through into the funnel underneath, going round with the wheel
+      if (t - P.at > 1.25 && !P.open) { P.open = true; F.doors[P.i] = t; }
+      if (t - P.at > 1.4) {
+        const U = F.under, r = clamp(w.frad, U.rs + 1, U.R - RW - 0.6);
+        Object.assign(w, { pocket: null, F: U, frad: r, fvr: 0, fL: r * r * F.om, fvh: 0, flap: 0 });
+        w.fh = Math.max(0, w.Y - RW - bowlY(U, r));
+        return;
+      }
     }
     w.fth = F.rot + P.phi;
     w.X = F.cx + Math.cos(w.fth) * w.frad; w.Z = F.cz + Math.sin(w.fth) * w.frad; w.Y = F.yR + RW + hop;

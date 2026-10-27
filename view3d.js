@@ -182,13 +182,16 @@ export function create(g) {
   function rebuild() {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
-    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], gate: null, solid: [] };
+    for (const m of fading.keys()) unfade(m); fading.clear();
+    D = { flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], gate: null };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
-    const add = (geo, mat) => { let l = lists.get(mat); if (!l) lists.set(mat, l = []); l.push(geo); };
+    // (merged piece by piece, so a piece in the way of the camera can fade on its own)
+    let curP = null;
+    const add = (geo, mat) => { const k = mat.uuid + (curP ? curP.i : ''); let l = lists.get(k); if (!l) lists.set(k, l = { mat, geos: [] }); l.geos.push(geo); };
 
     // the track, piece by piece, in whatever it's made of there
     for (const p of K.pieces) {
-      const st = p.style;
+      const st = p.style; curP = p;
       if (p.pipe) {
         // a halfpipe: a shell with a U down the middle (the same shape the balls roll on, see course3d.js's
         // pipeH), easing in from flat track at each end, its inside surfaced and steel coping along the top
@@ -262,10 +265,9 @@ export function create(g) {
         const m = mesh(sweep(p, arc, false), GLASS, false); m.renderOrder = 2; world.add(m);
       }
     }
-    for (const [mat, l] of lists) {
-      const m = mesh(mergeGeometries(l.map(q => q.index ? q.toNonIndexed() : q)), mat);
-      world.add(m); l.forEach(q => q.dispose());
-      if (mat !== BOOST && mat !== BELT && mat !== CHECKER) D.solid.push(m);   // (what the camera keeps out of)
+    for (const { mat, geos } of lists.values()) {
+      const m = mesh(mergeGeometries(geos.map(q => q.index ? q.toNonIndexed() : q)), mat);
+      world.add(m); geos.forEach(q => q.dispose());
     }
 
     // ---- what stands on the track ----
@@ -353,22 +355,30 @@ export function create(g) {
     }
     // Roulette wheels: a wooden bowl with a brass rim, its ball track sloping down to the wheel, which turns:
     // red, black and green pockets between brass frets, the numbers round its edge, and a cone in the
-    // middle with a brass turret on top. Under it, a stand down to a chute the balls drop out of.
+    // middle with a brass turret on top. Each pocket has a trap door in the bottom, which swings open to drop
+    // its ball into a glass funnel under the wheel.
     const WOOD = lam('#6a3018'), TRACKWOOD = shiny('#c8955a', { side: THREE.DoubleSide });
     for (const F of K.wheels) {
       const yr = F.yR - F.cy, base = new THREE.Group(); base.position.set(F.cx, F.cy, F.cz); world.add(base);
       base.add(mesh(new THREE.LatheGeometry([new THREE.Vector2(F.Rr, -F.k * (F.R - F.Rr)), new THREE.Vector2(F.R, 0)], 96), TRACKWOOD));
       base.add(mesh(new THREE.LatheGeometry([new THREE.Vector2(F.Rr - 0.5, yr - 3), new THREE.Vector2(F.R + 5, -6), new THREE.Vector2(F.R + 4, 2.5), new THREE.Vector2(F.R, 2.5), new THREE.Vector2(F.R, 0)], 96), lam('#6a3018', { side: THREE.DoubleSide })));
       base.add(mesh(new THREE.TorusGeometry(F.R + 2, 0.8, 8, 96).rotateX(Math.PI / 2).translate(0, 2.6, 0), BRASS));
-      base.add(mesh(new THREE.CylinderGeometry(F.Rh * 0.55, 3.5, F.H + yr - 3, 24).translate(0, (yr - 3 - F.H) / 2, 0), WOOD));
-      base.add(mesh(new THREE.TorusGeometry(F.rs - RW + 1.5, 0.8, 6, 24).rotateX(Math.PI / 2).translate(0, -F.H, 0), BRASS));
+      {
+        const U = F.under, pts = [];
+        for (let i = 0; i <= 40; i++) { const r = U.rs * Math.pow(U.R / U.rs, i / 40); pts.push(new THREE.Vector2(r, -U.Kf * (U.R / r - 1))); }
+        const f = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), FUNNEL_GLASS); f.position.set(U.cx, U.cy, U.cz); f.renderOrder = 2; world.add(f);
+        const rim = mesh(new THREE.TorusGeometry(U.R + 0.3, 0.6, 8, 64).rotateX(Math.PI / 2), BRASS); rim.position.set(U.cx, U.cy, U.cz); world.add(rim);
+        const spout = mesh(new THREE.TorusGeometry(U.rs + 0.6, 0.7, 6, 24).rotateX(Math.PI / 2), BRASS); spout.position.set(U.cx, U.cy - U.H, U.cz); world.add(spout);
+        // (and brass struts holding it to the wheel's bowl)
+        for (let i = 0; i < 4; i++) { const a = i / 4 * TAU + 0.4, s = mesh(new THREE.CylinderGeometry(0.5, 0.5, F.Rr - U.R + 2, 8).rotateZ(Math.PI / 2).translate((F.Rr + U.R) / 2, U.cy - F.cy, 0).rotateY(a), BRASS); base.add(s); }
+      }
       // the wheel, its top painted on one round texture (canvas x and y are the world's x and z)
       const wheelTex = canvasTex(1024, 1024, (x) => {
         const S = 512 / F.Rr, c = 512, NUMS = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
         const REDS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36], slot = TAU / 37;
         x.fillStyle = '#4a2010'; x.fillRect(0, 0, 1024, 1024);
         NUMS.forEach((n, i) => {
-          const a0 = (i - 0.5) * slot, a1 = (i + 0.5) * slot, col = n === 0 ? ['#1f9a4a', '#16753a'] : REDS.includes(n) ? ['#d0203a', '#9c1428'] : ['#1f1a26', '#120e18'];
+          const a0 = (i - 0.5) * slot, a1 = (i + 0.5) * slot, col = n === 0 ? ['#1f9a4a', '#16753a'] : REDS.includes(n) ? ['#d0203a', '#9c1428'] : ['#1f1a26', '#2a2232'];
           for (const [r0, r1, cc] of [[F.Rh, F.Rr * 0.9, col[1]], [F.Rr * 0.9, F.Rr, col[0]]]) { x.fillStyle = cc; x.beginPath(); x.arc(c, c, r1 * S, a0, a1); x.arc(c, c, r0 * S, a1, a0, true); x.fill(); }
           x.save(); x.translate(c + Math.cos(i * slot) * F.Rr * 0.95 * S, c + Math.sin(i * slot) * F.Rr * 0.95 * S); x.rotate(i * slot + Math.PI / 2);
           x.fillStyle = '#fffaf0'; x.font = 'bold 26px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(n), 0, 0); x.restore();
@@ -381,7 +391,20 @@ export function create(g) {
       rotor.add(mesh(new THREE.ConeGeometry(F.Rh, 7, 48).translate(0, 3.5, 0), WOOD));
       rotor.add(mesh(new THREE.CylinderGeometry(1.2, 1.6, 6, 12).translate(0, 9, 0), BRASS));
       for (let i = 0; i < 4; i++) rotor.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 9, 8).rotateZ(Math.PI / 2).translate(4.5, 10.5, 0).rotateY(i * Math.PI / 2), BRASS), mesh(new THREE.SphereGeometry(1, 10, 8).translate(9, 10.5, 0).rotateY(i * Math.PI / 2), BRASS));
-      D.wheels.push({ F, rotor });
+      // the trap doors: one in the bottom of each pocket, the pocket's color, hinged at its inner end, over a
+      // dark hole that shows when it's open
+      const doors = [], len = F.Rr * 0.9 - F.Rh - 0.8, wid = TAU * (F.Rh + len / 2) / 37 - 0.6;
+      const NUMS = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+      const REDS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
+      for (let i = 0; i < 37; i++) {
+        const n = NUMS[i], grp = new THREE.Group(), pivot = new THREE.Group();
+        grp.rotation.y = -i * TAU / 37; rotor.add(grp);
+        grp.add(mesh(new THREE.BoxGeometry(len, 0.05, wid).translate(F.Rh + 0.4 + len / 2, 0.03, 0), lam('#050308'), false));
+        pivot.position.set(F.Rh + 0.4, 0.08, 0); grp.add(pivot);
+        pivot.add(mesh(new THREE.BoxGeometry(len, 0.25, wid).translate(len / 2, 0.12, 0), [lam('#6a4a20'), lam('#6a4a20'), lam(n === 0 ? '#16753a' : REDS.includes(n) ? '#9c1428' : '#2a2232'), lam('#3a2a10'), lam('#6a4a20'), lam('#6a4a20')]));
+        doors.push(pivot);
+      }
+      D.wheels.push({ F, rotor, doors });
     }
     // the finish arch
     {
@@ -598,7 +621,7 @@ export function create(g) {
       pivot.rotation.y = Math.atan2(-du, ds);
     }
     if (D.gate) D.gate.visible = !K.doorsOpen;
-    for (const { o, m } of D.bumpers) m.material = BUMP[o.lit > 0 ? 1 : 0];
+    for (const { o, m } of D.bumpers) setMat(m, BUMP[o.lit > 0 ? 1 : 0]);
     for (const { Dm, pieces } of D.doms) pieces.forEach((tip, i) => {
       // (tipping over on whichever bottom edge it's falling toward)
       const a = g.domAngle(Dm, i);
@@ -606,7 +629,11 @@ export function create(g) {
     });
     for (const { c, inner } of D.cones) inner.rotation.z = c.hit ? -c.dir * Math.min(Math.PI / 2, (ct - c.hit) * 8) : 0;
     for (const { m, sp, ph } of D.cogs) m.rotation.z = ph + t * sp;
-    for (const { F, rotor } of D.wheels) rotor.rotation.y = -F.rot;
+    for (const { F, rotor, doors } of D.wheels) {
+      rotor.rotation.y = -F.rot;   // (three's y turn goes the other way round)
+      // a trap door: quickly open, held a moment, then swinging shut
+      doors.forEach((d, i) => { const e = ct - (F.doors[i] ?? -9), a = e < 0 ? 0 : e < 0.15 ? e / 0.15 : e < 0.9 ? 1 : e < 1.3 ? 1 - (e - 0.9) / 0.4 : 0; d.rotation.z = -a * 1.9; });
+    }
     for (const { o, body } of D.moles) { body.visible = o.up > 0.01; body.scale.y = Math.max(0.01, o.up); }   // (popping up out of its hole)   // (three's y turn goes the other way round)
     for (const { S, reels, lever, bulbs } of D.slots) {
       S.reels.forEach((r, i) => {
@@ -624,7 +651,7 @@ export function create(g) {
       const since = ct - (S.pulled ?? -9);
       lever.rotation.x = since < 0.15 ? 1.1 * since / 0.15 : since < 0.7 ? 1.1 * (1 - (since - 0.15) / 0.55) : 0;
       const hot = ct - S.won < 3, chase = Math.floor(t * (hot ? 16 : 4));
-      bulbs.forEach((b, i) => { b.material = BULB[(i + chase) % 3 ? 0 : 1]; });
+      bulbs.forEach((b, i) => setMat(b, BULB[(i + chase) % 3 ? 0 : 1]));
     }
     for (const d of D.decor) {
       d.m.position.y += d.vy * dt; d.m.rotation.y = t * d.spin + d.ph; d.m.rotation.x = Math.sin(t * 0.4 + d.ph) * 0.5;
@@ -704,7 +731,38 @@ export function create(g) {
     const w = ws.find(r => r.name.toLowerCase() === a) || ws.find(r => r.name.toLowerCase().startsWith(a)) || ws.find(r => r.name.toLowerCase().includes(a));
     if (w) setMode('follow', w);
   }
-  const ray = new THREE.Raycaster(); let rayN = 0, clearAt = Infinity;
+  const ray = new THREE.Raycaster(); let rayN = 0;
+  // Whatever's between the camera and the ball it's on (the track, a wheel, a slot machine...) fades to
+  // see-through, and back when it's out of the way. A faded thing gets its own see-through copies of its
+  // materials while it's faded. (Looked for every few frames.)
+  const fading = new Map(), inWay = new Set(), seeAt = new THREE.Vector3(), seeDir = new THREE.Vector3();
+  // (a lit-up material on something faded waits till it's back)
+  const setMat = (m, mat) => { if (m.userData.fade) m.userData.base = mat; else m.material = mat; };
+  function unfade(m) { const f = m.userData.fade; m.material = m.userData.base; [].concat(f).forEach(x => x.dispose()); delete m.userData.fade; }
+  function seeThrough(w, dt) {
+    if (++rayN % 3 === 0) {
+      inWay.clear();
+      if (w && w.mode !== 'done' && w.X != null) for (const up of [0, RW * 0.8]) {
+        seeAt.set(w.X, w.Y + up, w.Z); seeDir.copy(seeAt).sub(camera.position);
+        const far = seeDir.length() - RW * 1.3; if (far <= 0) continue;
+        ray.set(camera.position, seeDir.normalize()); ray.far = far; ray.camera = camera;
+        for (const h of ray.intersectObject(world, true)) {
+          const m = h.object, base = m.userData.base || m.material;
+          if (m.isMesh && m.visible && ![].concat(base).some(x => x.transparent)) inWay.add(m);
+        }
+      }
+    }
+    for (const m of inWay) if (!fading.has(m)) {
+      const base = m.material, see = x => { const c = x.clone(); c.transparent = true; c.depthWrite = false; return c; };
+      m.userData.base = base; m.userData.fade = Array.isArray(base) ? base.map(see) : see(base); m.material = m.userData.fade;
+      fading.set(m, 1);
+    }
+    for (const [m, o] of fading) {
+      const to = inWay.has(m) ? 0.22 : 1, op = o + (to - o) * (1 - Math.exp(-dt * 10));
+      if (to === 1 && op > 0.98) { unfade(m); fading.delete(m); continue; }
+      fading.set(m, op); [].concat(m.material).forEach(x => { x.opacity = op; });
+    }
+  }
   const off = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3(), chase = new THREE.Vector3();
   function leader() {
     let best = null;
@@ -756,16 +814,9 @@ export function create(g) {
     if (behind) off.lerp(behind, k * 0.6);   // (chasing: swing round behind it)
     else if (dist) off.setLength(off.length() + (dist - off.length()) * k);
     if (auto && !behind) { const a = t * 0.05; off.lerp(tmp.set(Math.cos(a), 0.45, Math.sin(a)).normalize().multiplyScalar(dist || off.length()), k * 0.15); }   // (circling slowly)
-    // following or chasing, it never ends up inside the track: if any's in the way between the ball and
-    // the camera, it comes in closer, in front of it (looked for every few frames)
-    if (cam.mode !== 'free' && cam.mode !== 'overview' && target && (++rayN % 3 === 0)) {
-      ray.set(controls.target, tmp.copy(off).normalize()); ray.far = off.length();
-      const hit = ray.intersectObjects(D.solid, false)[0];
-      clearAt = hit && hit.distance > 6 ? hit.distance - 4 : hit ? 6 : Infinity;
-    }
-    if (cam.mode !== 'free' && cam.mode !== 'overview' && off.length() > clearAt) off.setLength(clearAt);
     camera.position.copy(controls.target).add(off);
     camera.lookAt(controls.target);
+    seeThrough(cam.mode === 'follow' ? g.racers.get(cam.key) : cam.mode === 'auto' && g.state === 'race' ? cam.leader : null, dt);
     if (cam.mode === 'free') label = 'MANUAL · double-click for auto';
     if (camEl.dataset.l !== label) { camEl.dataset.l = label; camEl.innerHTML = '🎥 ' + label; }
     camEl.classList.toggle('show', cam.mode === 'follow');
