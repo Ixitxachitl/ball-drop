@@ -570,7 +570,7 @@
   // ---- things along the floors ----
   const CHIP_COLS = [['#e8344e', '#a3203a'], ['#2f6bff', '#1d43a8'], ['#22b35e', '#147a3e'], ['#8a5cff', '#5a3aad'], ['#3a3450', '#1f1a2e']];
   const FEAT = { hop: 3, spring: 1.3, boost: 1.1, belt: 0.8, trap: 0.9, loop: 1.2, gap: 1.3, dominoes: 0.8, cones: 0.7, lamp: 0.6, pipe: 0.7, none: 2.2,
-    spinner: 1.1, bat: 0.6, catapult: 0.7, seesaw: 0.6, escalator: 0.6, drum: 0.6, rollers: 0.6, pusher: 0.7, hump: 0.6, bridge: 0.6 };
+    spinner: 1.1, bat: 0.6, catapult: 0.7, seesaw: 0.6, escalator: 0.6, drum: 0.6, rollers: 0.6, pusher: 0.7, hump: 0.6, bridge: 0.6, rough: 0.9 };
   const HOPS = { die: [7, 7], chips: [8, 0], mush: [9, 9], kick: [9, 9] };
   function dress(sp) {
     const b = sp.b, f = sp.flow, L = sp.xb - sp.xa;
@@ -668,7 +668,7 @@
         // the wheels and batting them on
         const L = 9, cx = X(s + L + 4), fy = yOn(sp, cx), cy = fy - L - 2.5;
         if (room < 2 * L + 20 || cy - L - ceilAt(cx, b) < 2 || underHole(b, cx, L + 6)) { s += 10; continue; }
-        const n = pick([2, 3, 4, 6]), M = { type: 'spin', x: cx, y: cy, L, n, th: rnd(0, 6.283), w: -f * (n > 4 ? rnd(2.2, 2.8) : rnd(3, 4)), segs: [] };
+        const n = pick([2, 3, 4, 6]), M = { type: 'spin', x: cx, y: cy, L, n, th: rnd(0, 6.283), w: -f * (n > 4 ? rnd(1.2, 1.5) : rnd(1.4, 1.8)), segs: [] };   // (turning slowly: nothing flickers)
         for (let j = 0; j < M.n; j++) M.segs.push(seg(cx, cy, cx, cy, { e: 0.5, reach: [cx - L, cy - L, cx + L, cy + L] }));
         K.movs.push(M);
         s += 2 * L + ri(20, 32);
@@ -703,7 +703,7 @@
         const run = 26, rise = 10, land = 8, x0 = X(s), x1 = X(s + run), x2 = X(s + run + land), y0 = yOn(sp, x0), top = y0 - rise;
         if (room < run + land + 24 || top - Math.max(ceilAt(x0, b), ceilAt(x1, b), ceilAt(x2, b)) < 2 * RW + 6 || underHole(b, (x0 + x2) / 2, 20)) { s += 10; continue; }
         const E = { x0, y0, x1, x2, top, y2: yOn(sp, x2), f, sp };
-        seg(x0, y0, x1, top, { flow: f, belt: 75, esc: E }); seg(x1, top, x2, top, { flow: f }); seg(x2, top, x2, E.y2, { e: 0.3 });
+        seg(x0, y0, x1, top, { flow: f, belt: 60, esc: E }); seg(x1, top, x2, top, { flow: f }); seg(x2, top, x2, E.y2, { e: 0.3 });
         K.escs.push(E);
         s += run + land + ri(24, 34);
       } else if (k === 'drum') {
@@ -713,6 +713,13 @@
         const c = { x: cx, y: cy, r, e: 0.2, spin: f * 90, kind: 'drum', ang: 0 };
         K.circles.push(c); K.drums.push(c);
         s += 2 * r + ri(22, 32);
+      } else if (k === 'rough') {
+        // a stretch of cobbles or gravel: bumpy, slowing the wheels a little and bouncing them about
+        const len = Math.min(room - 6, ri(24, 50));
+        if (len < 20) continue;
+        const a = X(s), c = X(s + len);
+        sp.marks.push({ a: Math.min(a, c), b: Math.max(a, c), rough: pick(['cobble', 'gravel']) });
+        s += len + 10;
       } else if (k === 'bridge') {
         // a rope bridge: planks strung between two posts, sagging, and bouncing under the wheels on it
         const L = ri(40, 64), xa = X(s), xb = X(s + L), x0 = Math.min(xa, xb), x1 = Math.max(xa, xb), below = K.bands[b.i + 1];
@@ -851,7 +858,7 @@
         }
         continue;
       }
-      const s = seg(a, yOn(sp, a), c, yOn(sp, c), { flow: f, sp, spring: m.spring, boost: m.boost, belt: m.belt, trap: m.trap });
+      const s = seg(a, yOn(sp, a), c, yOn(sp, c), { flow: f, sp, spring: m.spring, boost: m.boost, belt: m.belt, trap: m.trap, rough: m.rough });
       if (m.trap) m.trap.seg = s;
       if (m.spring) s.anim = 0;
     }
@@ -876,6 +883,7 @@
     w.vy += G * dt;
     if (c) {
       if (c.s.rest) w.vx *= 1 - 4 * dt;
+      else if (c.s.rough) { w.vx *= 1 - 1.2 * dt; if (Math.random() < 5 * dt) { w.vy -= rnd(20, 45); nudgeZ(w, 20); } }
       else {
         const vt = w.vx * c.tx + w.vy * c.ty, want = c.s.belt || MINV;
         if (vt < want) { const a = Math.min(want - vt, (c.s.belt ? 500 : 260) * dt); w.vx += c.tx * a; w.vy += c.ty * a; }
@@ -1101,7 +1109,7 @@
       }
     }
     // (the goal hole is the only way through the bottom floor, so anything below it has gone in)
-    if (state === 'race' && w.y > K.goal.y + 3) finish(w);
+    if (w.y > K.goal.y + 3) { if (state === 'race') finish(w); else if (state === 'results') { w.mode = 'done'; refreshLive(); return; } }
     else if (w.y > H + 12) warp(w, K.bands.length - 1);
   }
 
@@ -1179,7 +1187,7 @@
         M.skirt.on = fy - ey > 2.5; M.skirt.ax = M.skirt.bx = ex; M.skirt.ay = ey; M.skirt.by = fy;
       }
     }
-    for (const c of K.drums) c.ang += c.spin / c.r * dt;
+    for (const c of K.drums) c.ang += Math.sign(c.spin) * 1.5 * dt;   // (drawn turning gently: fast stripes strobe)
     for (const T of K.traps) if (simT >= T.next) {
       T.open = !T.open; T.seg.on = !T.open; T.next = simT + (T.open ? rnd(0.9, 1.6) : rnd(2.5, 6));
     }
@@ -1459,6 +1467,11 @@
         const y = Math.round(s.ay + (s.by - s.ay) * clamp((x + 0.5 - s.ax) / (s.bx - s.ax), 0, 1));
         const lip = (sp.lipEnd && Math.abs(x - lowX) < 9) || (sp.lipStart && Math.abs(x - highX) < 9) ? (Math.floor(x / 3) & 1) ? C.stripeA : C.stripeB : null;
         trackPx(x, y, sp, lip);
+        if (s.rough) {   // (cobbles or gravel on top)
+          const h = (x * 7 + 3) % 5;
+          if (s.rough === 'cobble') { if (h !== 0) px(x, y - 1, h < 3 ? '#8a8498' : '#a8a2b8'); }
+          else if (h < 3) px(x, y - 1, ['#8a7a5a', '#c8b898', '#6a5a3a'][h]);
+        }
       }
     }
     // the tops of the hop obstacles' boxes aren't track: those are drawn as dice and chips (see drawHops)
@@ -1798,8 +1811,8 @@
       for (let i = 0; i <= Math.abs(E.x2 - E.x0); i++) {
         const x = E.x0 + dir * i, yt = i <= n ? E.y0 + (E.top - E.y0) * i / n : E.top, yb = yOn(E.sp, x);
         ctx.fillStyle = '#3a3450'; ctx.fillRect(Math.round(x), Math.round(yt) + 1, 1, Math.max(0, Math.round(yb - yt) - 1));
-        const ph = ((i - t * 75 * 0.9) % 4 + 4) % 4;
-        px(Math.round(x), Math.round(yt), i > n ? '#c8c8d8' : ph < 1 ? '#ffe600' : '#a8a8bc');
+        const ph = ((i - t * 12) % 4 + 4) % 4;   // (the steps creeping up, gently)
+        px(Math.round(x), Math.round(yt), i > n ? '#c8c8d8' : ph < 1 ? '#c8c8d8' : '#a8a8bc');
         if (i <= n + 3) px(Math.round(x), Math.round(yt) - 7, '#16121e');   // (the handrail)
       }
     }

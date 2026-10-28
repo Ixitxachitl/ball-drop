@@ -10,7 +10,8 @@
 // swinging across, see-saws, escalators, beds of spinning rollers, pistons punching out of the rails, flipper
 // gauntlets, marble runs where the track splits into narrow lanes (walled, or wire) that corkscrew round
 // and cross over and under each other or twist round each other like a rope, tornado spirals, spinning
-// turntables set into the track, swaying rope bridges, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
+// turntables set into the track, swaying rope bridges, lottery drums the balls tumble through, turns with
+// berms, patches of cobbles, gravel and rumble strips, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
 // of dice, chips and bumpers to weave between, and lane splits with something different down each side,
 // then a finish arch. It turns back toward the middle before it wanders too far, and a piece that would run
 // into track already there is built some other way.
@@ -130,12 +131,14 @@ export function createCourse(g) {
   const PIPE = { fb: 6, R: HW - 6, ramp: 30 };
   const pipeM = (p, s) => smooth(clamp(Math.min(s, p.len - s) / PIPE.ramp, 0, 1));
   function pipeH(p, s, u) {
+    if (p.berm && Math.sign(u) !== p.berm) return [0, 0, 0];   // (a berm: the wall's only on the outside)
     const m = pipeM(p, s), d = Math.abs(u) - PIPE.fb, R = PIPE.R;
     if (d <= 0 || m === 0) return [0, 0, 0];
     const q = Math.sqrt(Math.max(1e-4, R * R - Math.min(d, R) ** 2));
     return [m * (R - q), m * Math.sign(u) * d / q, m * R * R / (q * q * q)];
   }
-  const ubAt = (p, s) => p.pipe ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : p.ub ?? UB;
+  // (how far across a ball can go, on side sd)
+  const ubAt = (p, s, sd = 1) => p.pipe || p.berm === sd ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : p.ub ?? UB;
 
   // A piece along a path given as a function of how far along it is (0..1), its points spaced evenly; up
   // off it is as near straight up as it can be. (The marble run's lanes.)
@@ -167,7 +170,7 @@ export function createCourse(g) {
   }
   // a turnstile: n arms of length L round a hub at (s, u), turning flat over the track
   function spinner(p, s, u, n, L) {
-    const M = { type: 'spin', p, cs: s, cu: u, L, n, th: rnd(0, TAU), w: pick([-1, 1]) * rnd(1.6, 2.6), segs: [] };
+    const M = { type: 'spin', p, cs: s, cu: u, L, n, th: rnd(0, TAU), w: pick([-1, 1]) * rnd(0.8, 1.2), segs: [] };   // (turning slowly: nothing flickers)
     for (let k = 0; k < n; k++) { const sg = { as: s, au: u, bs: s, bu: u, e: 0.5 }; M.segs.push(sg); p.segs.push(sg); }
     post(p, s, u, 1.6, 'hub', { e: 0.4 });
     (p.movs ||= []).push(M);
@@ -223,7 +226,7 @@ export function createCourse(g) {
     if (p.kind === 'loop' || p.len < 40) return used;
     for (let s = rnd(14, 26); s < p.len - 30; s += rnd(...every)) {
       if (p.regions.some(r => s + 30 > r.a && s - 4 < r.b) || p.obs.some(o => Math.abs(o.s - s - 15) < 20) || (p.blocks || []).some(([a, b]) => s + 30 > a && s - 4 < b)) continue;
-      const side = p.turnSign && Math.random() < 0.8 ? -p.turnSign : pick([-1, 1]);
+      const side = p.berm ? -p.berm : p.turnSign && Math.random() < 0.8 ? -p.turnSign : pick([-1, 1]);   // (not on a berm)
       p.segs.push({ as: s, au: side * (RAIL - 1.4), bs: s + 11, bu: side * (RAIL - 8), e: 0.55, kick: 50, deflector: true });
       if (Math.random() < 0.65) {
         const k = pick(['bumper', 'die', 'chip', 'bumper']), r = k === 'bumper' ? 4.5 : k === 'die' ? 3.6 : 3.8, u = -side * rnd(0, fits(r));
@@ -242,7 +245,7 @@ export function createCourse(g) {
     if (p.len < 60) return;
     const e = p.len;
     bumper(p, e - 30, 0);
-    for (const sd of [-1, 1]) bumper(p, e - 8, sd * (RAIL - 0.08 - 4.5));
+    for (const sd of [-1, 1]) bumper(p, e - 8, sd * (RAIL - 0.08 - 4.5)).inward = -sd;   // (knocking balls in off the rail, never back into it)
     (p.blocks ||= []).push([e - 38, e]);
   }
   // Deflectors along both rails of an obstacle's stretch, from a to b, one side then the other, so no ball
@@ -270,21 +273,28 @@ export function createCourse(g) {
     if (p.kind === 'loop' || p.len < 40) return;
     // (and nothing on top of boost pads or conveyors)
     const used = deflectors(p).concat(p.regions.map(r => [r.a, r.b]), p.blocks || []), clear = (a, b) => !used.some(([u0, u1]) => b > u0 && a < u1);
-    const ds = rnd(6, Math.max(7, p.len - 60));
-    if (Math.random() < 0.35 && clear(ds, ds + 50)) dominoes(p, ds, pick([-1, 1]));
+    // a patch of cobbles, gravel or rumble strips
+    const rs = rnd(10, Math.max(11, p.len - 50)), rl = rnd(16, 34);
+    if (Math.random() < 0.4 && clear(rs, rs + rl)) { p.regions.push({ a: rs, b: rs + rl, rough: pick(['cobble', 'gravel', 'rumble']) }); used.push([rs, rs + rl]); }
+    const ds = rnd(6, Math.max(7, p.len - 60)), edge = () => p.berm ? -p.berm : pick([-1, 1]);
+    if (Math.random() < 0.35 && clear(ds, ds + 50)) dominoes(p, ds, edge());
     const s0 = rnd(6, p.len - 20);
-    if (Math.random() < 0.3 && clear(s0, s0 + 26)) { const side = pick([-1, 1]); for (let k = 0; k < ri(2, 4); k++) p.cones.push({ s: s0 + k * 6, u: side * EDGE, hit: 0 }); }
+    if (Math.random() < 0.3 && clear(s0, s0 + 26)) { const side = edge(); for (let k = 0; k < ri(2, 4); k++) p.cones.push({ s: s0 + k * 6, u: side * EDGE, hit: 0 }); }
     for (let s = rnd(10, 40); s < p.len - 5; s += rnd(60, 110)) p.lamps.push({ s, side: pick([-1, 1]) });
   }
 
   // ---- features: one or more pieces that carry on from the turtle ----
   const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2,
-    spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1 };
+    spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1, tumbler: 0.9 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
     if (kind === 'straight') { const p = add(straight(rnd(70, 140), -rnd(0.06, 0.12))); if (Math.random() < 0.4) p.regions.push({ a: p.len * 0.4, b: p.len * 0.4 + 14, boost: 165 }); dress(p); }
-    else if (kind === 'turn') { const p = add(turn(pick([-1, 1]) * rnd(0.9, 2.4), rnd(55, 95), -rnd(0.05, 0.1))); curveEnd(p); dress(p); }
+    else if (kind === 'turn') {
+      const p = add(turn(pick([-1, 1]) * rnd(0.9, 2.4), rnd(55, 95), -rnd(0.05, 0.1)));
+      if (Math.random() < 0.4) p.berm = -p.turnSign;   // (a berm round the outside: the balls ride up it)
+      curveEnd(p); dress(p);
+    }
     else if (kind === 'tornado') { const p = add(turn(pick([-1, 1]) * rnd(TAU * 2.5, TAU * 3.5), rnd(34, 40), -0.26, { kind: 'helix' })); curveEnd(p); deflectors(p, [45, 70]); }   // (a tight spiral, round and round)
     else if (kind === 'helix') { const p = add(turn(pick([-1, 1]) * rnd(TAU * 0.9, TAU * 1.6), rnd(45, 60), -rnd(0.16, 0.22), { kind: 'helix' })); curveEnd(p); deflectors(p, [45, 70]); }
     else if (kind === 'loop') {
@@ -381,7 +391,7 @@ export function createCourse(g) {
     } else if (kind === 'escalator') {
       // an escalator: a conveyor of steps carrying the balls up a rise, and over the top
       const e = add(straight(60, 0.26, { kind: 'escalator', style: 'track' }));
-      e.regions.push({ a: 0, b: e.len, belt: 70, esc: true });
+      e.regions.push({ a: 0, b: e.len, belt: 45, esc: true });
       add(straight(50, -0.12));
     } else if (kind === 'rollers') {
       // beds of spinning rollers set into the track: some roll the balls across to one side, some speed them on
@@ -415,13 +425,23 @@ export function createCourse(g) {
       const L = rnd(110, 150), D = rnd(6, 10), yaw = tur.yaw;
       add(sweep('bridge', L, f => [yaw, Math.atan(-D * Math.PI / L * Math.cos(Math.PI * f) - 0.06), 0], { style: 'bridge', bridge: { A: rnd(0.16, 0.26), w: rnd(1.4, 2.2), ph: rnd(0, TAU), roll: 0 } }));
       add(straight(30, -0.06));
+    } else if (kind === 'tumbler') {
+      // A lottery drum: a turning wire cage the track runs through. Fins inside carry the balls up its side and
+      // drop them across it, so they tumble about as they make their way down it and out the far end.
+      add(straight(30, -0.08));
+      const p = add(straight(50, -0.1, { kind: 'tumbler', style: 'tumbler' }));
+      p.drum = { R: HW - 0.5, w: pick([-1, 1]) * rnd(1.6, 2.1), th: rnd(0, TAU), n: 5 };
+      // (the cage stands up off the track: nothing else is built through the top of it)
+      p.extra = [];
+      for (let i = 0; i < p.n; i += 4) for (const h of [p.drum.R, 2 * p.drum.R]) p.extra.push([p.P[i * 3] + p.N[i * 3] * h, p.P[i * 3 + 1] + p.N[i * 3 + 1] * h, p.P[i * 3 + 2] + p.N[i * 3 + 2] * h]);
+      add(straight(30, -0.08));
     } else if (kind === 'spinpads') {
       // turntables set into the track, spinning: a ball rolling onto one is swept round with it, and off
       const p = add(straight(rnd(130, 160), -0.1, { kind: 'spinpads' }));
       p.pads = [];
       for (let s = 26; s < p.len - 24;) {
         const r = rnd(6, 10.5), u = rnd(-1, 1) * (RAIL - 0.6 - r);
-        p.pads.push({ s: s + r, u, r, w: pick([-1, 1]) * rnd(2.5, 4), th: rnd(0, TAU) });
+        p.pads.push({ s: s + r, u, r, w: pick([-1, 1]) * rnd(1.2, 1.8), th: rnd(0, TAU) });
         s += 2 * r + rnd(8, 16);
       }
       railKickers(p, 14, p.len - 10);
@@ -584,7 +604,7 @@ export function createCourse(g) {
     for (const p of pieces) for (let i = 0; i < p.n; i++) for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j], p.P[i * 3 + j]); hi[j] = Math.max(hi[j], p.P[i * 3 + j]); }
     K = {
       three: true, stuck: {}, pieces, total, PIPE, moles: pieces.flatMap(p => p.obs.filter(o => o.kind === 'mole')), wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
-      pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge).map(p => p.bridge), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
+      drums: pieces.filter(p => p.drum).map(p => p.drum), pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge).map(p => p.bridge), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
     };
@@ -621,7 +641,8 @@ export function createCourse(g) {
   function place3(w) {
     const p = pieces[w.pi], f = at(p, w.s, w.fr ??= fr());
     let b = w.u, n = RW + (w.lift || 0);
-    if (p.pipe) { const [h, h1] = pipeH(p, w.s, w.u), l = Math.hypot(1, h1); b -= h1 / l * RW; n = h + RW / l; }   // (up a halfpipe's wall, out from it square to it)
+    if (p.drum && w.dr) return placeDrum(w, p);
+    if (p.pipe || p.berm) { const [h, h1] = pipeH(p, w.s, w.u), l = Math.hypot(1, h1); b -= h1 / l * RW; n = h + RW / l; }   // (up a halfpipe's wall, or a berm, out from it square to it)
     if (p.bridge) { const r = rollAt(p, w.s), c = Math.cos(r), sn = Math.sin(r); [b, n] = [b * c + n * sn, -b * sn + n * c]; }   // (on a rope bridge, rolled over with it)
     w.X = f.P[0] + f.B[0] * b + f.N[0] * n; w.Y = f.P[1] + f.B[1] * b + f.N[1] * n; w.Z = f.P[2] + f.B[2] * b + f.N[2] * n;
     w.x = w.X; w.y = -w.Y; w.z = w.Z;
@@ -639,6 +660,7 @@ export function createCourse(g) {
     if (o.spin) { const vt = -w.vs * nu + w.vu * ns, dv = (o.spin - vt) * 0.6; w.vs -= nu * dv; w.vu += ns * dv; }   // (a spinning drum carries it round)
     if (o.kick && t - (o.hitT || -9) > 0.05) {
       w.vs += ns * o.kick; w.vu += nu * o.kick; o.hitT = t;
+      if (o.inward) { w.vu = o.inward * rnd(50, 110); w.vs = Math.max(w.vs, rnd(40, 90)); }   // (one on a rail: in and on, somewhere new)
       if (w.vs < 30) w.vs = rnd(30, 80);   // (and always on down the track)
       o.lit = 1;
       emit(w.X, -w.Y, 8, ['#ffe600', '#fff', '#ff3bd0'], 50, 50, 120, undefined, w.Z);
@@ -673,8 +695,46 @@ export function createCourse(g) {
     if (sg.kick && t - (sg.hitT || -9) > 0.08) { w.vs += ns * sg.kick; w.vu += nu * sg.kick; sg.hitT = t; sg.lit = 1; emit(w.X, -w.Y, 6, ['#ffe600', '#fff', '#3ff8ff'], 40, 40, 140, undefined, w.Z); }
   }
 
+  // In a lottery drum: how far along it (s), and round it: its angle from the bottom (phi, toward +u), or,
+  // dropped by a fin, flying across it (x across, y up from its middle).
+  const drumR = D => D.R - RW - 0.4;
+  function placeDrum(w, p) {
+    const d = w.dr, R = drumR(p.drum), f = at(p, w.s, w.fr ??= fr());
+    const x = d.air ? d.x : R * Math.sin(d.phi), y = d.air ? d.y : -R * Math.cos(d.phi), h = R + RW + y;
+    w.X = f.P[0] + f.B[0] * x + f.N[0] * h; w.Y = f.P[1] + f.B[1] * x + f.N[1] * h; w.Z = f.P[2] + f.B[2] * x + f.N[2] * h;
+    flat(w);
+  }
+  function stepDrum(w, p, dt, racing) {
+    const D = p.drum, R = drumR(D), f = at(p, w.s, F1);
+    let d = w.dr;
+    if (!d || d.pi !== p.i) d = w.dr = { pi: p.i, phi: Math.asin(clamp(w.u / R, -1, 1)), phd: 0, air: false, x: 0, y: 0, vx: 0, vy: 0 };
+    // along it: down its slope, never stopping
+    w.vs += (12 - w.vs) * Math.min(1, 3 * dt);   // (crawling along it, so it tumbles a few times on the way)
+    w.s += w.vs * dt;
+    if (!d.air) {
+      // on the cage: pulled back down to the bottom, and dragged round by it
+      d.phd += (-(G * 0.9 / R) * Math.sin(d.phi) + 2.5 * (D.w - d.phd)) * dt;
+      d.phi = wrap(d.phi + d.phd * dt);
+      // a fin coming round behind it picks it up and carries it
+      for (let k = 0; k < D.n; k++) { const rel = wrap(d.phi - D.th - k * TAU / D.n); if (D.w > 0 ? rel < 0 && rel > -0.06 : rel > 0 && rel < 0.06) { d.phi = wrap(d.phi - rel + Math.sign(D.w) * 0.001); d.phd = D.w; } }
+      // carried up past its side, it drops away across the drum
+      if (Math.abs(d.phi) > 2) Object.assign(d, { air: true, x: R * Math.sin(d.phi), y: -R * Math.cos(d.phi), vx: R * d.phd * Math.cos(d.phi), vy: R * d.phd * Math.sin(d.phi) });
+    } else {
+      d.vy -= G * dt; d.x += d.vx * dt; d.y += d.vy * dt;
+      if (Math.hypot(d.x, d.y) >= R) { d.phi = Math.atan2(d.x, -d.y); d.phd = (d.vx * Math.cos(d.phi) + d.vy * Math.sin(d.phi)) / R; d.air = false; }
+    }
+    // out the far end (once it's down at the bottom)
+    if (w.s >= p.len) {
+      if (!d.air && Math.abs(d.phi) < 1.2) { w.u = clamp(R * Math.sin(d.phi), -UB, UB); w.vu = 0; w.dr = null; w.s -= p.len; w.pi++; place3(w); w.dist = pieces[w.pi].s0 + w.s; return; }
+      w.s = p.len - 0.05;
+    }
+    if (w.s < 0) w.s = 0;
+    placeDrum(w, p);
+    w.dist = p.s0 + w.s;
+  }
   function stepTrack(w, dt, racing) {
     const p = pieces[w.pi], f = at(p, w.s, F1);
+    if (p.drum) return stepDrum(w, p, dt, racing);
     w.ps = w.s; w.pu = w.u;
     // along: gravity (as a rolling ball feels it), and its own speed; across: the banking and the turns
     const as = -G * f.T[1] * ROLL;
@@ -687,11 +747,12 @@ export function createCourse(g) {
       if (w.vs < MINV) w.vs += Math.min(MINV - w.vs, 240 * dt);
       else if (w.vs > MINV + 30) w.vs -= (w.vs - MINV) * 0.22 * dt;
     }
-    if (p.pipe) { const [, h1, h2] = pipeH(p, w.s, w.u); au = (au - G * ROLL * f.N[1] * h1 - h1 * h2 * w.vu * w.vu) / (1 + h1 * h1); }
+    if (p.pipe || p.berm) { const [, h1, h2] = pipeH(p, w.s, w.u); au = (au - G * ROLL * f.N[1] * h1 - h1 * h2 * w.vu * w.vu) / (1 + h1 * h1); }
     if (p.bridge) au += G * ROLL * Math.sin(rollAt(p, w.s));   // (a rope bridge's sway rolls it toward the low side)
-    w.vu += au * dt; w.vu *= 1 - (p.pipe ? 0.25 : 0.7) * dt;
+    w.vu += au * dt; w.vu *= 1 - (p.pipe || p.berm ? 0.25 : 0.7) * dt;
     for (const r of p.regions) if (w.s >= r.a && w.s < r.b && (r.u0 == null || (w.u >= r.u0 && w.u <= r.u1))) {
       if (r.belt) { w.vs = r.belt; w.vu *= 1 - 4 * dt; }
+      else if (r.rough) { w.vs -= w.vs * (r.rough === 'gravel' ? 1.2 : 0.5) * dt; w.vu += rnd(-1, 1) * (r.rough === 'rumble' ? 50 : 90) * dt; }   // (bumpy: slowed and jostled)
       else if (r.roll) { const k = Math.min(1, 7 * dt); if (r.roll.vu) w.vu += (r.roll.vu - w.vu) * k; if (r.roll.vs && w.vs < r.roll.vs) w.vs += (r.roll.vs - w.vs) * k; }
       else if (r.boost && w.vs < r.boost) { w.vs = r.boost; if (!w.boostT) emit(w.X, -w.Y, 8, ['#3ff8ff', '#1a5cff', '#fff'], 40, 30, 100, undefined, w.Z); w.boostT = 0.8; }
     }
@@ -701,8 +762,8 @@ export function createCourse(g) {
     }
     const sp = Math.hypot(w.vs, w.vu); if (sp > VMAX) { w.vs *= VMAX / sp; w.vu *= VMAX / sp; }
     w.s += w.vs * dt; w.u += w.vu * dt;
-    const ub = ubAt(p, w.s);
-    if (Math.abs(w.u) > ub) { w.u = Math.sign(w.u) * ub; if (w.vu * w.u > 0) w.vu *= p.pipe ? 0 : -0.45; }
+    const sd = Math.sign(w.u) || 1, ub = ubAt(p, w.s, sd);
+    if (Math.abs(w.u) > ub) { w.u = sd * ub; if (w.vu * w.u > 0) w.vu *= p.pipe || p.berm === sd ? 0 : -0.45; }
     for (const o of p.obs) if (Math.abs(o.s - w.s) < o.r + RW + 1) {
       if (o.kind === 'mole') {
         if (o.up < 0.4) continue;   // (down its hole)
@@ -999,6 +1060,7 @@ export function createCourse(g) {
       Object.assign(F.seg, { as: F.ps, au: F.pu, bs: F.ps + Math.cos(F.psi) * F.len, bu: F.pu + Math.sin(F.psi) * F.len, spin: (F.psi - was) / dt });
     }
     for (const P of K.pads) P.th += P.w * dt;
+    for (const D of K.drums) D.th += D.w * dt;
     for (const B of K.bridges) B.roll = B.A * Math.sin(B.w * t + B.ph);
     for (const M of K.movs) {
       if (M.type === 'spin') {
@@ -1043,19 +1105,29 @@ export function createCourse(g) {
     const round = w => w.m3 === 'funnel' || w.m3 === 'wheel';
     // (in a funnel, in or out is along the radius and round is across it)
     const radial = w => { const c = Math.cos(w.fth), sn = Math.sin(w.fth); return [c, sn, -sn, c]; };
+    const drum = w => w.m3 === 'track' && w.dr && pieces[w.pi].drum ? w.dr : null;
     const vel = (w, o) => {
-      if (w.m3 === 'track') { o[0] = w.vs * w.fr.T[0] + w.vu * w.fr.B[0]; o[1] = w.vs * w.fr.T[1] + w.vu * w.fr.B[1]; o[2] = w.vs * w.fr.T[2] + w.vu * w.fr.B[2]; }
+      const d = drum(w);
+      if (d) {
+        const R = drumR(pieces[w.pi].drum), cx = d.air ? d.vx : R * d.phd * Math.cos(d.phi), cy = d.air ? d.vy : R * d.phd * Math.sin(d.phi), F = w.fr;
+        for (let j = 0; j < 3; j++) o[j] = w.vs * F.T[j] + cx * F.B[j] + cy * F.N[j];
+      } else if (w.m3 === 'track') { o[0] = w.vs * w.fr.T[0] + w.vu * w.fr.B[0]; o[1] = w.vs * w.fr.T[1] + w.vu * w.fr.B[1]; o[2] = w.vs * w.fr.T[2] + w.vu * w.fr.B[2]; }
       else if (round(w)) { const [cr, sr, ct, st] = radial(w), vt = w.fL / w.frad; o[0] = w.fvr * cr + vt * ct; o[1] = 0; o[2] = w.fvr * sr + vt * st; }
       else { o[0] = w.vx; o[1] = w.vy; o[2] = w.vz; }
       return o;
     };
     const nudge = (w, x, y, z, isVel) => {
-      if (round(w)) {
+      const d = drum(w);
+      if (d) {
+        const F = w.fr, R = drumR(pieces[w.pi].drum), ds = x * F.T[0] + y * F.T[1] + z * F.T[2], db = x * F.B[0] + y * F.B[1] + z * F.B[2], dn = x * F.N[0] + y * F.N[1] + z * F.N[2];
+        if (isVel) { w.vs += ds; if (d.air) { d.vx += db; d.vy += dn; } else d.phd += (db * Math.cos(d.phi) + dn * Math.sin(d.phi)) / R; }
+        else { w.s += ds; if (d.air) { d.x += db; d.y += dn; } else d.phi += (db * Math.cos(d.phi) + dn * Math.sin(d.phi)) / R; }
+      } else if (round(w)) {
         const [cr, sr, ct, st] = radial(w), dr = x * cr + z * sr, dt2 = x * ct + z * st;
         if (isVel) { w.fvr += dr; w.fL += w.frad * dt2; } else { w.frad = clamp(w.frad + dr, w.F.rs + 0.5, w.F.R - RW - 0.6); w.fth += dt2 / w.frad; }
       } else if (w.m3 === 'track') {
         const ds = x * w.fr.T[0] + y * w.fr.T[1] + z * w.fr.T[2], du = x * w.fr.B[0] + y * w.fr.B[1] + z * w.fr.B[2];
-        if (isVel) { w.vs += ds; w.vu += du; } else { const ub = ubAt(pieces[w.pi], w.s); w.s += ds; w.u = clamp(w.u + du, -ub, ub); }
+        if (isVel) { w.vs += ds; w.vu += du; } else { const q = pieces[w.pi]; w.s += ds; w.u = clamp(w.u + du, -ubAt(q, w.s, -1), ubAt(q, w.s, 1)); }
       } else if (isVel) { w.vx += x; w.vy += y; w.vz += z; } else { w.X += x; w.Y += y; w.Z += z; }
     };
     const va = [0, 0, 0], vb = [0, 0, 0];
@@ -1078,6 +1150,7 @@ export function createCourse(g) {
   // A ball that's barely moving gets a nudge; one that hasn't got further along for a while is lifted on.
   function watch(w, dt) {
     if (w.m3 !== 'track' || w.rank) return;
+    if (w.dr) { w.prog = t; return; }   // (tumbling in a lottery drum: it'll be out in a moment)
     if (Math.abs(w.vs) < 8) w.idle += dt; else w.idle = Math.max(0, w.idle - 2 * dt);
     if (w.idle > 1.2) { w.idle = 0; w.kicks++; note('kick ' + pieces[w.pi].kind); w.vs = 90; w.vu = rnd(-30, 30); }
     if (w.dist > (w.best ?? -1) + 3) { w.best = w.dist; w.prog = t; }

@@ -10,7 +10,8 @@ pieces: ramps that roll the pack back and forth across the screen, peaks that sp
 funnels, pinball flippers, pachinko pins and pop bumpers, springs, loops, trapdoors, jumps only the fast wheels
 clear, and glass pipes that take a shortcut a few floors down. Things move, too: windmills and paddle wheels
 that bat the wheels along, bats that swing down at one going under, catapults in the floor, see-saws,
-escalators, spinning drums, rollers and humps, and bars riding along slots that push the wheels on. However it's put together there's always a way
+escalators, spinning drums, rollers and humps, bars riding along slots that push the wheels on, and bumpy
+stretches of cobbles and gravel. Nothing spins or flashes fast. However it's put together there's always a way
 to the goal, with forks along the way.
 
 Racers' names always show over their wheels. When a racer chats during the race, only their emotes (and emoji)
@@ -50,7 +51,9 @@ And marble runs, where the track splits into three narrow lanes that wind round 
 together: walled lanes that corkscrew round the middle one, a wire-track maze where the outer two cross
 over and under the middle one to the other side, or a knot where all three twist round each other like the
 strands of a rope. Each ball takes whichever lane it reaches. Plus tornado spirals, round and round three
-times or so, spinning turntables set into the track that sweep the balls round, and swaying rope bridges.
+times or so, spinning turntables set into the track that sweep the balls round, swaying rope bridges,
+lottery drums (turning wire cages the balls tumble through), berms round the outside of some turns, and
+patches of cobbles, gravel and rumble strips.
 Every curve ends in pop bumpers (one in the middle, one against each rail) that knock the balls it's flung
 outward somewhere new, and deflectors along the rails of the obstacle stretches mean no ball gets past along
 the sides. Finished balls roll on into a tray past the checkered line.

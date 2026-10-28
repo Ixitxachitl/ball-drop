@@ -74,9 +74,18 @@ export function create(g) {
   const plankTex = rowsTex([['#8a5a3a', '#8a5a3a', '#8a5a3a', '#6a4028']]);
   const BOOST = new THREE.MeshBasicMaterial({ map: boostTex }), BELT = new THREE.MeshLambertMaterial({ map: beltTex });
   const FELT = lam('#1f7a4a');
+  // the textured patches: cobbles, gravel and rumble strips (tiled across the track)
+  const ROUGH = (() => {
+    const tile = (draw, rep) => { const t = canvasTex(32, 32, draw); t.repeat.set(1, rep); return new THREE.MeshLambertMaterial({ map: t }); };
+    return {
+      cobble: tile((x) => { x.fillStyle = '#4a4458'; x.fillRect(0, 0, 32, 32); for (const [cx, cy] of [[8, 8], [24, 8], [16, 24], [0, 24], [32, 24]]) { x.fillStyle = '#8a8498'; x.beginPath(); x.arc(cx, cy, 6.5, 0, TAU); x.fill(); x.fillStyle = '#a8a2b8'; x.fillRect(cx - 3, cy - 4, 3, 2); } }, 8),
+      gravel: tile((x) => { x.fillStyle = '#8a7a5a'; x.fillRect(0, 0, 32, 32); for (let k = 0; k < 90; k++) { x.fillStyle = ['#6a5a3a', '#a89a78', '#7a6a4a', '#c8b898'][k % 4]; x.fillRect(Math.floor(rnd(0, 31)), Math.floor(rnd(0, 31)), 2, 2); } }, 8),
+      rumble: tile((x) => { x.fillStyle = '#e8344e'; x.fillRect(0, 0, 32, 32); x.fillStyle = '#fffaf0'; x.fillRect(16, 0, 16, 32); }, 1),
+    };
+  })();
   // a turntable's top: slices of color round it, so you can see it turn
   const padTex = canvasTex(64, 64, (x) => {
-    for (let k = 0; k < 12; k++) { x.fillStyle = ['#ff3bd0', '#fffaf0', '#3ff8ff', '#fffaf0'][k % 4]; x.beginPath(); x.moveTo(32, 32); x.arc(32, 32, 32, k / 12 * TAU, (k + 1) / 12 * TAU); x.fill(); }
+    for (let k = 0; k < 6; k++) { x.fillStyle = ['#d873b8', '#efe8f4', '#7cc8d8'][k % 3]; x.beginPath(); x.moveTo(32, 32); x.arc(32, 32, 32, k / 6 * TAU, (k + 1) / 6 * TAU); x.fill(); }   // (few, soft slices: no flicker)
     x.fillStyle = '#1f1830'; x.beginPath(); x.arc(32, 32, 6, 0, TAU); x.fill();
   }, true);
   const drumTex = rowsTex([['#ff3b5c', '#ff3b5c', '#fffaf0', '#fffaf0', '#3ff8ff', '#3ff8ff', '#fffaf0', '#fffaf0']]), rollTex = rowsTex([['#c8c8d8', '#c8c8d8', '#6a6488']]);
@@ -189,7 +198,7 @@ export function create(g) {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
     for (const m of fading.keys()) unfade(m); fading.clear();
-    D = { bridges: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
+    D = { tumblers: [], bridges: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     // Where the track (and the funnels and roulette wheels) is, so the columns, gears, lamps, slot machines
     // and floating decorations can be kept out of it. clearOf: is something this wide, from y0 up to y1 at
@@ -198,6 +207,7 @@ export function create(g) {
     for (const p of K.pieces) for (let i = 0; i < p.n; i += 2) {
       const k = tkey(p.P[i * 3], p.P[i * 3 + 2]); let l = tgrid.get(k); if (!l) tgrid.set(k, l = []);
       l.push({ x: p.P[i * 3], y: p.P[i * 3 + 1], z: p.P[i * 3 + 2], p, s: i * p.ds, w: p.lane ? 6 : HW + 2 });
+      if (p.drum) for (const h of [p.drum.R, 2 * p.drum.R]) l.push({ x: p.P[i * 3], y: p.P[i * 3 + 1] + h, z: p.P[i * 3 + 2], p, s: i * p.ds, w: p.drum.R + 2 });   // (a lottery drum's cage, up off it)
     }
     const bowls = K.pieces.filter(p => p.fun).map(({ fun: F }) => ({ x: F.cx, z: F.cz, R: F.R + 6, top: F.cy + 8, bot: F.cy - F.H - 6 }));
     const clearOf = (x, z, r, y0, y1, own, os) => {
@@ -216,6 +226,16 @@ export function create(g) {
     // the track, piece by piece, in whatever it's made of there
     for (const p of K.pieces) {
       const st = p.style; curP = p;
+      if (p.drum) {
+        // a lottery drum: a wire cage (brass hoops and steel bars) with fins inside, turning, on two stands
+        const Dm = p.drum, len = p.len, g0 = onTrack(new THREE.Group(), p, len / 2, 0, Dm.R - 0.4), rot = new THREE.Group(); g0.add(rot);
+        for (let x = -len / 2; x <= len / 2 + 0.1; x += len / 6) rot.add(mesh(new THREE.TorusGeometry(Dm.R, 0.4, 6, 40).rotateY(Math.PI / 2).translate(x, 0, 0), BRASS));
+        for (let k = 0; k < 12; k++) rot.add(mesh(new THREE.CylinderGeometry(0.25, 0.25, len, 5).rotateZ(Math.PI / 2).translate(0, -Dm.R, 0).rotateX(-k * TAU / 12), STEEL));
+        for (let k = 0; k < Dm.n; k++) rot.add(mesh(new THREE.BoxGeometry(len - 2, 3.4, 0.5).translate(0, -(Dm.R - 1.7), 0).rotateX(-k * TAU / Dm.n), lam('#8a3a4a')));
+        for (const x of [-len / 2 - 1.5, len / 2 + 1.5]) for (const sd of [-1, 1]) g0.add(mesh(new THREE.BoxGeometry(1.4, Dm.R + 2, 1.4).translate(x, -(Dm.R + 2) / 2 + 1, sd * (Dm.R * 0.8)), IRON));
+        world.add(g0); D.tumblers.push({ Dm, rot });
+        continue;
+      }
       if (p.bridge) {
         // a rope bridge: planks that sway with it (see animate), and a tower of posts at each end
         const planks = [];
@@ -285,9 +305,25 @@ export function create(g) {
         add(sweep(p, rect(-HW + 0.6, HW - 0.6, -0.6, 0), true), lam(C.top));
         for (const sd of [-1, 1]) add(sweep(p, rect(sd * HW - (sd > 0 ? 1.2 : 0), sd * HW + (sd < 0 ? 1.2 : 0), -0.5, 3), true), lam(C.dark));
       }
+      if (p.berm) {
+        // a berm: the outside of the turn curving up like a halfpipe's wall (the shape the balls ride on, see
+        // course3d.js's pipeH), easing in and out at the ends
+        const { fb, R, ramp } = K.PIPE, n = 9, sd = p.berm;
+        const mAt = i => { const x = clamp(Math.min(i * p.ds, p.len - i * p.ds) / ramp, 0, 1); return x * x * (3 - 2 * x); };
+        const wall = (i, off) => { const m = mAt(i), out = []; for (let k = 0; k < n; k++) { const th = k / (n - 1) * Math.PI / 2; let nu = -sd * m * Math.sin(th), nh = Math.cos(th); const l = Math.hypot(nu, nh); out.push([sd * (fb + R * Math.sin(th)) + nu / l * off, m * R * (1 - Math.cos(th)) + nh / l * off + 0.04]); } return out; };
+        const top = i => Math.max(3, mAt(i) * R) + 0.6;
+        add(sweep(p, i => [...wall(i, 0), [sd * HW, top(i)], [sd * (HW + 1.2), top(i)], [sd * (HW + 1.2), -3], [sd * fb, -3]], true), lam(C.body));
+        add(sweep(p, i => [...wall(i, 0.06), ...wall(i, -0.3).reverse()], true), lam(C.top));
+        add(sweep(p, i => rect(sd * HW - 0.5, sd * HW + 0.7, top(i) - 0.3, top(i) + 0.5), true), STEEL);
+      }
       // boost pads and conveyors, laid on top; their textures scroll
       for (const r of p.regions) {
         if (r.roll || r.esc) continue;
+        if (r.rough) {   // (cobbles, gravel or rumble strips: a texture laid over the deck)
+          const a = Math.floor(r.a / p.ds), b = Math.min(p.n - 1, Math.ceil(r.b / p.ds));
+          add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.14), true, a, b, r.rough === 'rumble' ? 1 / 3 : 1 / 4), ROUGH[r.rough]);
+          continue;
+        }
         const a = Math.floor(r.a / p.ds), b = Math.min(p.n - 1, Math.ceil(r.b / p.ds)), u0 = r.u0 ?? -HW, u1 = r.u1 ?? HW;
         add(sweep(p, rect(Math.max(u0, -K.RAIL) + (u0 > -HW ? 0.8 : 0.2), Math.min(u1, K.RAIL) - (u1 < HW ? 0.8 : 0.2), 0.02, 0.32), true, a, b, r.belt ? 0.25 : 1 / 12), r.belt ? BELT : BOOST);
       }
@@ -464,10 +500,10 @@ export function create(g) {
           if (r.roll.vu) {
             const g0 = onTrack(new THREE.Group(), p, (r.a + r.b) / 2, 0, 0);
             for (let u = -K.RAIL + 1.4; u <= K.RAIL - 1.4; u += 2.4) { const m = mesh(new THREE.CylinderGeometry(1.05, 1.05, r.b - r.a - 0.6, 12).rotateZ(Math.PI / 2), mat); m.position.set(0, -0.8, u); g0.add(m); ms.push(m); }
-            world.add(g0); D.rollers.push({ ms, axis: 'x', w: -Math.sign(r.roll.vu) * 10 });
+            world.add(g0); D.rollers.push({ ms, axis: 'x', w: -Math.sign(r.roll.vu) * 2.5 });   // (drawn turning gently: fast stripes strobe)
           } else {
             for (let s = r.a + 1.2; s <= r.b - 1.2; s += 2.4) { const m = mesh(new THREE.CylinderGeometry(1.05, 1.05, 2 * K.RAIL - 0.6, 12).rotateX(Math.PI / 2), mat); world.add(onTrack(new THREE.Group(), p, s, 0, -0.8).add(m)); ms.push(m); }
-            D.rollers.push({ ms, axis: 'z', w: -12 });
+            D.rollers.push({ ms, axis: 'z', w: -2.5 });
           }
         }
       }
@@ -797,6 +833,7 @@ export function create(g) {
     }
     for (const { S, plank } of D.saws) plank.rotation.z = -S.th;
     for (const { P, top } of D.pads) top.rotation.y = -P.th;
+    for (const { Dm, rot } of D.tumblers) rot.rotation.x = -Dm.th;
     // the rope bridges: each plank rolled over as far as the bridge is there, and the hand ropes strung along
     // the tops of the posts, from tower to tower
     for (const { p, planks, ropes } of D.bridges) {
@@ -814,10 +851,10 @@ export function create(g) {
         });
       });
     }
-    for (const { o, m } of D.drums) m.rotation.y -= o.spin / o.r * dt;
+    for (const { o, m } of D.drums) m.rotation.y -= Math.sign(o.spin) * 1.5 * dt;   // (drawn turning gently)
     for (const R of D.rollers) for (const m of R.ms) m.rotation[R.axis] += R.w * dt;
     for (const E of D.escs) {
-      const off = (ct * 70) % E.gap;
+      const off = (ct * 45) % E.gap;
       E.steps.forEach((m, k) => {
         const s = k * E.gap + off;
         m.visible = s < E.p.len - E.gap / 2;
