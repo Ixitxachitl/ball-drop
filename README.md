@@ -8,7 +8,9 @@ reaches the goal at the bottom first wins.
 The machine is a random Rube Goldberg contraption built from the Stunt Wheel's track, casino and pinball
 pieces: ramps that roll the pack back and forth across the screen, peaks that split it, valleys, glass coin
 funnels, pinball flippers, pachinko pins and pop bumpers, springs, loops, trapdoors, jumps only the fast wheels
-clear, and glass pipes that take a shortcut a few floors down. However it's put together there's always a way
+clear, and glass pipes that take a shortcut a few floors down. Things move, too: windmills and paddle wheels
+that bat the wheels along, bats that swing down at one going under, catapults in the floor, see-saws,
+escalators, spinning drums, rollers and humps, and bars riding along slots that push the wheels on. However it's put together there's always a way
 to the goal, with forks along the way.
 
 Racers' names always show over their wheels. When a racer chats during the race, only their emotes (and emoji)
@@ -40,8 +42,18 @@ roulette wheels they spin round and settle into a pocket of (red's a boost, gree
 halfpipes they swing from wall to wall down, whack-a-mole stretches where moles pop up and bonk them into
 the air, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts of dice, chips and
 bumpers to weave between, lane splits with a boost pad down one side and a slow conveyor down the other,
-bumpers along the rails that knock balls back into the action, dominoes, and slot machines whose levers the
-balls pull as they pass (7-7-7 pays out a boost). Finished balls roll on into a tray past the checkered line.
+bumpers along the rails that knock balls back into the action, dominoes, slot machines whose levers the
+balls pull as they pass (7-7-7 pays out a boost), and moving things: turnstiles, paddle wheels, hammers
+swinging across the track, see-saws, escalators, beds of spinning rollers, spinning drums, pistons punching
+out of the rails, and flipper gauntlets with flippers at all sorts of angles that flick at a ball coming by.
+And marble runs, where the track splits into three narrow lanes that wind round each other and come back
+together: walled lanes that corkscrew round the middle one, a wire-track maze where the outer two cross
+over and under the middle one to the other side, or a knot where all three twist round each other like the
+strands of a rope. Each ball takes whichever lane it reaches. Plus tornado spirals, round and round three
+times or so, spinning turntables set into the track that sweep the balls round, and swaying rope bridges.
+Every curve ends in pop bumpers (one in the middle, one against each rail) that knock the balls it's flung
+outward somewhere new, and deflectors along the rails of the obstacle stretches mean no ball gets past along
+the sides. Finished balls roll on into a tray past the checkered line.
 The racers are glossy balls in their chat colors with their initial on them, rolling along and across the
 track. It's all under a night sky with a city on the horizon and searchlights, so unlike the 2D view the
 source isn't see-through. Joining, starting, the signs, names and emote bubbles work the same as in 2D. OBS
@@ -52,6 +64,8 @@ coming home. In OBS's Interact window you can take over:
 
 - **Drag** to orbit, **mouse wheel** to zoom, **right-drag** to pan.
 - **Click a racer** to follow them; **double-click** empty space to go back to auto.
+- The **2D / 3D** buttons at the top right (they show while the mouse is over it, like the other buttons)
+  switch views; it reloads in the other one.
 - Keys: **A** auto, **O** the whole course, **F** leave the camera where it is, **← / →** follow the next racer.
 
 ## Chat commands

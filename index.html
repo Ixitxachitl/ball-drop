@@ -157,6 +157,9 @@
   /* ---------- host buttons and the settings window (only visible while you interact with the source) ---------- */
   #host{position:fixed;right:84px;bottom:22px;z-index:1000;display:flex;gap:14px;opacity:0;pointer-events:none;transition:opacity .25s}
   body.mouse #host{opacity:1;pointer-events:auto}
+  #views{position:fixed;right:16px;top:58px;z-index:1000;display:flex;gap:12px;opacity:0;pointer-events:none;transition:opacity .25s}
+  body.mouse #views{opacity:1;pointer-events:auto}
+  #views .on{background:#ffe600}
   #gear{position:fixed;right:20px;bottom:20px;width:48px;height:48px;z-index:1000;border:0;border-radius:0;
     background:#ff9a1f;box-shadow:0 -4px 0 0 var(--ink),0 4px 0 0 var(--ink),-4px 0 0 0 var(--ink),4px 0 0 0 var(--ink),var(--lit),6px 6px 0 2px rgba(20,10,40,.45);
     cursor:pointer;display:grid;place-items:center;opacity:0;pointer-events:none;transition:opacity .25s,transform .1s}
@@ -387,8 +390,10 @@
   // pinball flippers), and a field of pins and bumpers scatters them. Each floor is picked so it catches
   // what the floor above drops, which rolls the pack back and forth across the screen. Along the ramps go
   // jumps only the faster wheels clear, trapdoors, springs up into floating bumpers, dice and chip stacks to
-  // hop, loops, conveyor belts, boost pads and glass pipes down to a floor further on, so the pack takes
-  // different ways down. Since nothing is ever level without something pushing, and every dip has a hole
+  // hop, loops, conveyor belts, boost pads and glass pipes down to a floor further on, and things that move:
+  // windmills and paddle wheels batting the wheels along, bats that swing down at one going by, catapults
+  // in the floor, see-saws, escalators, spinning drums and rollers, and bars riding along slots in the track
+  // pushing them on, so the pack takes different ways down. Since nothing is ever level without something pushing, and every dip has a hole
   // in it, there's always a way to the goal at the bottom.
   let K = null;
   const HOLE = 18;
@@ -437,7 +442,7 @@
     if (C3) { K = C3.build(); return; }   // (the 3D view's course: see course3d.js)
     const pw = Math.max(90, Math.round(W * CFG.width / 100) - 10);
     const xl = Math.round((W - pw) / 2), xr = xl + pw;
-    K = { xl, xr, segs: [], circles: [], spans: [], bands: [], flippers: [], traps: [], bumpers: [], pegs: [], hops: [], slots: [],
+    K = { xl, xr, segs: [], circles: [], spans: [], bands: [], flippers: [], traps: [], bumpers: [], pegs: [], hops: [], slots: [], movs: [], drums: [], escs: [],
       lamps: [], pipes: [], grid: new Map(), startY: 22, slats: [], doorAng: 0, doorsOpen: false, rows: [] };
     seg(xl, -80, xl, H + 30, { e: 0.3, wall: true });
     seg(xr, -80, xr, H + 30, { e: 0.3, wall: true });
@@ -451,7 +456,7 @@
     let y = y0, prev = null;
     for (let i = 0; i < nb; i++) {
       const bh = i === nb - 1 ? y1 - y : Math.round((y1 - y0) * wts[i] / tw);
-      const b = { i, yT: y, yB: y + bh, last: i === nb - 1, hops: [], loops: [], pipes: [], funnels: [], doms: [], cones: [], slots: [], spans: [] };
+      const b = { i, yT: y, yB: y + bh, last: i === nb - 1, hops: [], loops: [], pipes: [], funnels: [], doms: [], cones: [], slots: [], spans: [], flips: [] };
       y += bh;
       let fl = null, kind = '';
       for (let tries = 0; tries < 60 && !fl; tries++) {
@@ -493,9 +498,10 @@
     // the spatial grid: every solid thing is listed in each 16 px cell it's near
     for (const s of K.segs) {
       if (s.flip) { const F = s.flip; gridAdd(s, F.px - F.len, F.py - F.len, F.px + F.len, F.py + F.len); }
+      else if (s.reach) gridAdd(s, ...s.reach);   // (a moving one: everywhere it goes)
       else gridAdd(s, Math.min(s.ax, s.bx), Math.min(s.ay, s.by), Math.max(s.ax, s.bx), Math.max(s.ay, s.by));
     }
-    for (const c of K.circles) gridAdd(c, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r);
+    for (const c of K.circles) if (c.reach) gridAdd(c, ...c.reach); else gridAdd(c, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r);
     K.art = bake(W, H, drawCourse);
     K.sky = CFG.scenery ? bake(W, H, drawSkyline) : null;
   }
@@ -545,16 +551,26 @@
   // float over the slopes.
   function pinball(b) {
     for (const dir of [1, -1]) {
-      const pxv = b.cx - dir * b.hw, F = { px: pxv, py: b.low, dir, len: 10, rest: 0.5, up: -0.5, a: 0.5, st: 0, next: rnd(0.5, 2) };
-      F.seg = seg(pxv, b.low, pxv + dir * F.len * Math.cos(F.a), b.low + F.len * Math.sin(F.a), { e: 0.3, flow: dir, flip: F });
-      K.flippers.push(F);
+      flipper(b, b.cx - dir * b.hw, b.low, 10, dir > 0 ? 0.5 : Math.PI - 0.5, dir > 0 ? -1 : 1, { flow: dir });
     }
     for (const sp of b.spans) for (let k = ri(1, 2); k > 0; k--) floatBumper(b, sp, sp.xa + (sp.xb - sp.xa) * rnd(0.3, 0.75), sp.flow);
   }
 
+  // A flipper hinged at (x, y), its arm `len` long at angle a0 at rest (on screen: 0 is right, down is
+  // positive) and flicking round by `sweep`. With `zone` ([x0, y0, x1, y1]) it flicks when a wheel's in it.
+  function flipper(b, x, y, len, a0, sweep, o = {}) {
+    const F = { px: x, py: y, len, a0, sweep, ang: a0, k: 0, st: 0, next: o.zone ? rnd(3, 7) : rnd(0.5, 2), zone: o.zone, cool: 0, kind: o.kind || 'flipper' };
+    F.seg = seg(x, y, x + len * Math.cos(a0), y + len * Math.sin(a0), { e: 0.3, flow: o.flow || 0, flip: F });
+    K.flippers.push(F); b.flips.push(F);
+    return F;
+  }
+  // (is x under one of the holes in the floor above, where wheels drop through?)
+  const underHole = (b, x, m) => K.bands[b.i - 1]?.holes.some(([a, c]) => x > a - m && x < c + m);
+
   // ---- things along the floors ----
   const CHIP_COLS = [['#e8344e', '#a3203a'], ['#2f6bff', '#1d43a8'], ['#22b35e', '#147a3e'], ['#8a5cff', '#5a3aad'], ['#3a3450', '#1f1a2e']];
-  const FEAT = { hop: 3, spring: 1.3, boost: 1.1, belt: 0.8, trap: 0.9, loop: 1.2, gap: 1.3, dominoes: 0.8, cones: 0.7, lamp: 0.6, pipe: 0.7, none: 2.2 };
+  const FEAT = { hop: 3, spring: 1.3, boost: 1.1, belt: 0.8, trap: 0.9, loop: 1.2, gap: 1.3, dominoes: 0.8, cones: 0.7, lamp: 0.6, pipe: 0.7, none: 2.2,
+    spinner: 1.1, bat: 0.6, catapult: 0.7, seesaw: 0.6, escalator: 0.6, drum: 0.6, rollers: 0.6, pusher: 0.7, hump: 0.6, bridge: 0.6 };
   const HOPS = { die: [7, 7], chips: [8, 0], mush: [9, 9], kick: [9, 9] };
   function dress(sp) {
     const b = sp.b, f = sp.flow, L = sp.xb - sp.xa;
@@ -647,6 +663,86 @@
         if (y - ceilAt(x, b) < 22) { s += 8; continue; }
         K.lamps.push({ x: Math.round(x), y: Math.round(y) });
         s += 16;
+      } else if (k === 'spinner') {
+        // a windmill (or, with more arms, a paddle wheel) turning over the track, its arms coming down behind
+        // the wheels and batting them on
+        const L = 9, cx = X(s + L + 4), fy = yOn(sp, cx), cy = fy - L - 2.5;
+        if (room < 2 * L + 20 || cy - L - ceilAt(cx, b) < 2 || underHole(b, cx, L + 6)) { s += 10; continue; }
+        const n = pick([2, 3, 4, 6]), M = { type: 'spin', x: cx, y: cy, L, n, th: rnd(0, 6.283), w: -f * (n > 4 ? rnd(2.2, 2.8) : rnd(3, 4)), segs: [] };
+        for (let j = 0; j < M.n; j++) M.segs.push(seg(cx, cy, cx, cy, { e: 0.5, reach: [cx - L, cy - L, cx + L, cy + L] }));
+        K.movs.push(M);
+        s += 2 * L + ri(20, 32);
+      } else if (k === 'bat') {
+        // a bat hung up high, cocked back up the track: when a wheel comes under it, it swings down and whacks it on
+        const La = 12, cx = X(s + 18), fy = yOn(sp, cx), cy = fy - La - 3;
+        if (room < 44 || cy - La - ceilAt(cx, b) < 1 || underHole(b, cx, 18)) { s += 10; continue; }
+        const zx = X(s + 2);
+        flipper(b, cx, cy, La, Math.PI / 2 + f * 1.25, -f * 2.3, { kind: 'bat', zone: [Math.min(zx, cx), fy - 12, Math.max(zx, cx), fy] }).top = ceilAt(cx, b);
+        s += ri(44, 56);
+      } else if (k === 'catapult') {
+        // a catapult lying in the floor, hinged at its far end: a wheel rolling onto it gets flung up
+        const len = 12, xp = X(s + len + 2), yp = yOn(sp, xp) - 1, fx = sp.xb - sp.xa, fyv = sp.yb - sp.ya;
+        if (room < 40 || yp - ceilAt(xp, b) < 30) { s += 10; continue; }
+        const down = Math.atan2(f * fyv, f * fx), xa = X(s + 2);
+        flipper(b, xp, yp, len, down + Math.PI, f * 0.8, { flow: f, kind: 'catapult', zone: [Math.min(xa, xp), yp - 2 * RW - 2, Math.max(xa, xp), yp + 2] });
+        s += len + ri(26, 36);
+      } else if (k === 'seesaw') {
+        // A see-saw: down at this end, so the wheels roll on and up it; it tips as they go over the middle and
+        // drops them off the far end. While the near end's up, a board under it keeps them from rolling under.
+        const L = 40, hp = 4, cx = X(s + L / 2 + 3), fy = yOn(sp, cx), cy = fy - hp;
+        if (room < L + 26 || cy - 2 * hp - ceilAt(cx, b) < 2 * RW + 6 || underHole(b, cx, L / 2)) { s += 10; continue; }
+        const beta = Math.atan2(sp.yb - sp.ya, sp.xb - sp.xa), delta = Math.asin(clamp(2 * hp * Math.cos(beta) / L, 0, 1));
+        const reach = [cx - L / 2 - 2, cy - L / 2, cx + L / 2 + 2, fy + 2];
+        const S = { type: 'saw', x: cx, y: cy, L, f, sp, beta, delta, a: beta - f * delta, ad: 0, load: 0 };
+        S.segs = [-1, 1].map(() => seg(cx, cy, cx, cy, { e: 0.15, flow: f, saw: S, reach }));
+        S.skirt = seg(cx, cy, cx, cy, { e: 0.3, on: false, reach });
+        K.movs.push(S);
+        s += L + ri(26, 36);
+      } else if (k === 'escalator') {
+        // an escalator: a conveyor of steps up a short rise, a landing, and a drop off the end
+        const run = 26, rise = 10, land = 8, x0 = X(s), x1 = X(s + run), x2 = X(s + run + land), y0 = yOn(sp, x0), top = y0 - rise;
+        if (room < run + land + 24 || top - Math.max(ceilAt(x0, b), ceilAt(x1, b), ceilAt(x2, b)) < 2 * RW + 6 || underHole(b, (x0 + x2) / 2, 20)) { s += 10; continue; }
+        const E = { x0, y0, x1, x2, top, y2: yOn(sp, x2), f, sp };
+        seg(x0, y0, x1, top, { flow: f, belt: 75, esc: E }); seg(x1, top, x2, top, { flow: f }); seg(x2, top, x2, E.y2, { e: 0.3 });
+        K.escs.push(E);
+        s += run + land + ri(24, 34);
+      } else if (k === 'drum') {
+        // a big drum spinning on the track, its near side going up: wheels that meet it get carried up and over
+        const r = 6, cx = X(s + r + 3), cy = yOn(sp, cx) - r + 0.5;
+        if (room < 2 * r + 24 || cy - r - ceilAt(cx, b) < 2 * RW + 6) { s += 10; continue; }
+        const c = { x: cx, y: cy, r, e: 0.2, spin: f * 90, kind: 'drum', ang: 0 };
+        K.circles.push(c); K.drums.push(c);
+        s += 2 * r + ri(22, 32);
+      } else if (k === 'bridge') {
+        // a rope bridge: planks strung between two posts, sagging, and bouncing under the wheels on it
+        const L = ri(40, 64), xa = X(s), xb = X(s + L), x0 = Math.min(xa, xb), x1 = Math.max(xa, xb), below = K.bands[b.i + 1];
+        if (b.last || room < L + 16 || underHole(b, (x0 + x1) / 2, L / 2) || (below && below.spans.some(q => q.xa < x1 && q.xb > x0 && Math.min(yOn(q, clamp(x0, q.xa, q.xb)), yOn(q, clamp(x1, q.xa, q.xb))) < Math.max(yOn(sp, x0), yOn(sp, x1)) + 26))) { s += 10; continue; }
+        const B = { x0, x1, sp, f, D: 3, v: 0, load: 0, segs: [] };
+        sp.marks.push({ a: x0, b: x1, bridge: B });
+        K.movs.push({ type: 'bridge', B });
+        s += L + ri(18, 28);
+      } else if (k === 'hump') {
+        // a big disc set into the track, spinning, its top just showing: wheels rolling over it are sped on
+        const R = 10, cx = X(s + 9), cy = yOn(sp, cx) + R - 3;
+        if (room < 34 || yOn(sp, cx) - ceilAt(cx, b) < 2 * RW + 8) { s += 10; continue; }
+        const c = { x: cx, y: cy, r: R, e: 0.1, spin: f * rnd(90, 140), kind: 'hump', ang: 0, sp };
+        K.circles.push(c); K.drums.push(c);
+        s += ri(32, 44);
+      } else if (k === 'rollers') {
+        // a bed of spinning rollers set into the track, speeding the wheels on
+        const n = ri(4, 6);
+        if (room < n * 5.5 + 16) continue;
+        for (let j = 0; j < n; j++) { const cx = X(s + 3 + j * 5.5), c = { x: cx, y: yOn(sp, cx) - 1.5, r: 2.5, e: 0.1, spin: f * 130, kind: 'roller', ang: 0 }; K.circles.push(c); K.drums.push(c); }
+        s += n * 5.5 + ri(14, 22);
+      } else if (k === 'pusher') {
+        // a slot in the track with bars that pop up out of it, push the wheels along it and drop back in
+        const len = ri(46, 70), x0 = X(s), x1 = X(s + len);
+        if (room < len + 16) continue;
+        const ys = [yOn(sp, x0), yOn(sp, x1)];
+        const M = { type: 'pusher', x0, len, f, sp, pos: 0, wait: rnd(0, 1), v: 62 };
+        M.bar = seg(x0, ys[0], x0, ys[0] - 7, { e: 0.3, on: false, reach: [Math.min(x0, x1) - 1, Math.min(...ys) - 8, Math.max(x0, x1) + 1, Math.max(...ys) + 1] });
+        K.movs.push(M);
+        s += len + ri(18, 28);
       } else if (k === 'pipe') {
         if (b.i + 2 >= K.bands.length || K.pipes.length >= 3 || room < 30) continue;
         K.pipes.push({ x, y0: y, f, sp, b, chance: rnd(0.35, 0.55) });
@@ -747,6 +843,14 @@
       const a = xs[i], c = xs[i + 1];
       if (c - a < 0.01) continue;
       const m = sp.marks.find(q => q.a <= a + 0.01 && q.b >= c - 0.01) || {};
+      if (m.bridge) {   // (a plank every 4 px or so, each moved by the bridge, and listed everywhere it can go)
+        const B = m.bridge, n = Math.max(2, Math.round((c - a) / 4));
+        for (let j = 0; j < n; j++) {
+          const pa = a + (c - a) * j / n, pc = a + (c - a) * (j + 1) / n;
+          B.segs.push(seg(pa, yOn(sp, pa), pc, yOn(sp, pc), { flow: f, sp, bridge: B, xa0: pa, xb0: pc, vx: 0, vy: 0, reach: [pa - 1, Math.min(yOn(sp, pa), yOn(sp, pc)) - 1, pc + 1, Math.max(yOn(sp, pa), yOn(sp, pc)) + 9] }));
+        }
+        continue;
+      }
       const s = seg(a, yOn(sp, a), c, yOn(sp, c), { flow: f, sp, spring: m.spring, boost: m.boost, belt: m.belt, trap: m.trap });
       if (m.trap) m.trap.seg = s;
       if (m.spring) s.anim = 0;
@@ -838,13 +942,15 @@
   }
   function hitSeg(w, s, nx, ny, qx, qy) {
     // a flipper's surface is moving: bounce off it relative to its own motion
-    let svx = 0, svy = 0;
-    if (s.spin) { svx = -s.spin * (qy - s.ay); svy = s.spin * (qx - s.ax); }
+    let svx = s.vx || 0, svy = s.vy || 0;
+    if (s.spin) { svx -= s.spin * (qy - s.ay); svy += s.spin * (qx - s.ax); }
     let rx = w.vx - svx, ry = w.vy - svy;
     const vn = rx * nx + ry * ny;
     if (vn < 0) { rx -= (1 + s.e) * vn * nx; ry -= (1 + s.e) * vn * ny; w.vx = rx + svx; w.vy = ry + svy; }
     if (vn < -50) nudgeZ(w, Math.min(35, -vn * 0.2));   // a hard landing or knock throws it sideways a bit
     if (ny > -0.4) return;
+    if (s.saw) s.saw.load += (w.x - s.saw.x) * s.saw.f;
+    if (s.bridge) s.bridge.load++;
     // standing on it: which way is downhill (or the way this piece runs, where it's level)
     let tx = -ny, ty = nx;
     const f = s.flow || (ty > 0 ? 1 : -1);
@@ -861,12 +967,27 @@
     }
   }
   function hitCircle(w, c) {
-    const dx = w.x - c.x, dy = w.y - c.y, R = c.r + RW, d2 = dx * dx + dy * dy;
-    if (d2 >= R * R || d2 < 1e-9) return;
+    // (a spinning drum or roller grips a wheel that's just touching it, too)
+    const dx = w.x - c.x, dy = w.y - c.y, R = c.r + RW, d2 = dx * dx + dy * dy, reach = c.spin ? R + 1.5 : R;
+    if (d2 >= reach * reach || d2 < 1e-9) return;
+    if (c.kind === 'hump' && w.y > yOn(c.sp, clamp(w.x, c.sp.xa, c.sp.xb))) return;   // (it's only there above the track)
     const d = Math.sqrt(d2), nx = dx / d, ny = dy / d;
-    w.x = c.x + nx * R; w.y = c.y + ny * R;
-    const vn = w.vx * nx + w.vy * ny;
-    if (vn < 0) { w.vx -= (1 + c.e) * vn * nx; w.vy -= (1 + c.e) * vn * ny; nudgeZ(w, c.kick ? 45 : 25); }
+    if (d < R) {
+      w.x = c.x + nx * R; w.y = c.y + ny * R;
+      const vn = (w.vx - (c.vx || 0)) * nx + (w.vy - (c.vy || 0)) * ny;   // (relative to it, if it's moving)
+      if (vn < 0) { w.vx -= (1 + c.e) * vn * nx; w.vy -= (1 + c.e) * vn * ny; nudgeZ(w, c.kick ? 45 : 25); }
+    }
+    if (c.spin) {
+      // Spinning, it carries the wheel round with it, up its near side and over the top, hugging it (no
+      // bouncing off) while its surface there goes up or across; where it turns down, the wheel flies off.
+      const sg = Math.sign(c.spin), sx = -ny * sg, sy = nx * sg;
+      if (sy < 0.3 && ny < 0.2) {   // (and only on its top half: never holding one up under it)
+        const vt = Math.max(w.vx * sx + w.vy * sy, Math.abs(c.spin)), vn = Math.min(0, w.vx * nx + w.vy * ny);
+        w.vx = sx * vt + nx * vn; w.vy = sy * vt + ny * vn;
+      }
+      if (ny < -0.3) w.contact = { tx: sx, ty: sy, s: c };
+      return;
+    }
     if (c.kick) {
       if (simT - (c.hitT || -9) > 0.05) {
         w.vx += nx * c.kick; w.vy += ny * c.kick - 25; c.hitT = simT;
@@ -951,6 +1072,10 @@
   function triggers(w) {
     const b = K.rows[Math.round(w.y + RW)] || K.rows[Math.round(w.y)];
     if (b) {
+      for (const F of b.flips) {
+        if (F.zone && F.st === 0 && simT > F.cool && w.x > F.zone[0] && w.x < F.zone[2] && w.y > F.zone[1] && w.y < F.zone[3]) F.st = 1;
+        if (F.kind === 'bat' && Math.abs(w.x - F.px) < F.len + RW && w.y > F.py) F.busy = simT;   // (a bat waits to swing back till nothing's under it)
+      }
       for (const h of b.hops) {
         // (one knocked off course mid-hop that comes down into the box is put back on top of it)
         if (Math.abs(w.x - h.x) < h.hw / 2 && w.y > h.top - RW && w.y < h.fy) { w.y = h.top - RW - 0.1; w.py = w.y; w.vy = Math.min(0, w.vy); w.hopH = null; }
@@ -1011,13 +1136,50 @@
   function movers(dt) {
     for (const F of K.flippers) {
       if (F.st === 0 && simT >= F.next) F.st = 1;
-      const was = F.a;
-      if (F.st === 1) { F.a = Math.max(F.up, F.a - 16 * dt); if (F.a === F.up) { F.st = 2; F.hold = simT + 0.12; } }
-      else if (F.st === 2) { if (simT > F.hold) F.st = 3; }
-      else if (F.st === 3) { F.a = Math.min(F.rest, F.a + 6 * dt); if (F.a === F.rest) { F.st = 0; F.next = simT + rnd(0.5, 2.4); } }
-      F.seg.spin = F.dir * (F.a - was) / dt;
-      F.seg.bx = F.px + F.dir * F.len * Math.cos(F.a); F.seg.by = F.py + F.len * Math.sin(F.a);
+      const was = F.ang, rate = 1 / Math.abs(F.sweep);
+      if (F.st === 1) { F.k = Math.min(1, F.k + 16 * rate * dt); if (F.k === 1) { F.st = 2; F.hold = simT + 0.12; } }
+      else if (F.st === 2) { if (simT > F.hold && !(F.kind === 'bat' && simT - (F.busy ?? -9) < 0.15)) F.st = 3; }
+      else if (F.st === 3) { F.k = Math.max(0, F.k - (F.kind === 'bat' ? 3 : 6) * rate * dt); if (F.k === 0) { F.st = 0; F.next = simT + (F.zone ? rnd(4, 8) : rnd(0.5, 2.4)); F.cool = simT + 0.3; } }
+      F.ang = F.a0 + F.sweep * F.k;
+      F.seg.spin = (F.ang - was) / dt;
+      F.seg.bx = F.px + F.len * Math.cos(F.ang); F.seg.by = F.py + F.len * Math.sin(F.ang);
     }
+    for (const M of K.movs) {
+      if (M.type === 'spin') {
+        M.th += M.w * dt;
+        M.segs.forEach((sg, j) => { const a = M.th + j * 6.283 / M.n; sg.bx = M.x + M.L * Math.cos(a); sg.by = M.y + M.L * Math.sin(a); sg.spin = M.w; });
+      } else if (M.type === 'bridge') {
+        // sagging more under the wheels on it, springing back, and swaying a little on its own
+        const B = M.B, was = B.D;
+        B.v += (-30 * (B.D - 3 - 0.6 * Math.sin(simT * 2.3 + B.x0)) - 3 * B.v + 9 * Math.min(B.load, 6)) * dt; B.D = clamp(B.D + B.v * dt, 1, 8); B.load = 0;
+        const dD = (B.D - was) / dt;
+        for (const sg of B.segs) {
+          const sag = x => Math.sin(Math.PI * (x - B.x0) / (B.x1 - B.x0));
+          sg.ay = yOn(B.sp, sg.xa0) + B.D * sag(sg.xa0); sg.by = yOn(B.sp, sg.xb0) + B.D * sag(sg.xb0); sg.vy = dD * sag((sg.xa0 + sg.xb0) / 2);
+        }
+      } else if (M.type === 'pusher') {
+        // a bar riding along the slot, then back under the track to the start
+        if (M.wait > 0) { M.wait -= dt; M.bar.on = false; }
+        else {
+          M.pos += M.v * dt;
+          if (M.pos >= M.len) { M.pos = 0; M.wait = 0.5; M.bar.on = false; }
+          else {
+            const x = M.x0 + M.f * M.pos, y = yOn(M.sp, x), m = (M.sp.yb - M.sp.ya) / (M.sp.xb - M.sp.xa);
+            Object.assign(M.bar, { on: true, ax: x, bx: x, ay: y, by: y - 7, vx: M.f * M.v, vy: M.f * M.v * m });
+          }
+        }
+      } else if (M.type === 'saw') {
+        // tipped by the wheels standing on it past the middle, and back down at this end when there are none
+        M.ad += (M.f * (0.08 * M.load - 0.4) - 2 * M.ad) * dt; M.a += M.ad * dt; M.load = 0;
+        const lo = M.beta - M.delta, hi = M.beta + M.delta;
+        if (M.a < lo) { M.a = lo; M.ad = Math.max(0, M.ad); } else if (M.a > hi) { M.a = hi; M.ad = Math.min(0, M.ad); }
+        const c = Math.cos(M.a) * M.L / 2, sn = Math.sin(M.a) * M.L / 2;
+        M.segs.forEach((sg, j) => { const d = j ? 1 : -1; sg.bx = M.x + d * c; sg.by = M.y + d * sn; sg.spin = M.ad; });
+        const ex = M.x - M.f * c, ey = M.y - M.f * sn, fy = yOn(M.sp, clamp(ex, M.sp.xa, M.sp.xb));
+        M.skirt.on = fy - ey > 2.5; M.skirt.ax = M.skirt.bx = ex; M.skirt.ay = ey; M.skirt.by = fy;
+      }
+    }
+    for (const c of K.drums) c.ang += c.spin / c.r * dt;
     for (const T of K.traps) if (simT >= T.next) {
       T.open = !T.open; T.seg.on = !T.open; T.next = simT + (T.open ? rnd(0.9, 1.6) : rnd(2.5, 6));
     }
@@ -1289,7 +1451,7 @@
       }
     }
     for (const s of K.segs) {
-      if (s.wall || s.slat || s.trap || s.flip) continue;
+      if (s.wall || s.slat || s.trap || s.flip || s.bridge) continue;
       if (s.riser) { ctx.fillStyle = C.dark; ctx.fillRect(Math.round(s.ax), Math.round(s.ay), 1, Math.round(s.by - s.ay) + 3); px(Math.round(s.ax), Math.round(s.ay), '#fff3c0'); continue; }
       if (!s.sp) continue;
       const sp = s.sp, lowX = sp.flow > 0 ? sp.xb : sp.xa, highX = sp.flow > 0 ? sp.xa : sp.xb;
@@ -1608,14 +1770,79 @@
     }
   }
 
+  // (a thick line from (x, y) at angle a, tapering: for flippers, bats and arms)
+  function arm(x0, y0, a, len, th0, th1, c, hi) {
+    const steep = Math.abs(Math.sin(a)) > Math.abs(Math.cos(a));
+    for (let s = 0; s <= len; s += 0.7) {
+      const x = Math.round(x0 + Math.cos(a) * s), y = Math.round(y0 + Math.sin(a) * s), th = Math.round(th0 + (th1 - th0) * s / len);
+      ctx.fillStyle = c;
+      if (steep) { ctx.fillRect(x - (th >> 1), y, th, 1); if (hi) px(x - (th >> 1), y, hi); }
+      else { ctx.fillRect(x, y - (th >> 1), 1, th); if (hi) px(x, y - (th >> 1), hi); }
+    }
+  }
   function drawFlippers() {
     for (const F of K.flippers) {
-      for (let s = 0; s <= F.len; s++) {
-        const x = Math.round(F.px + F.dir * Math.cos(F.a) * s), y = Math.round(F.py + Math.sin(F.a) * s), th = Math.round(4 - 2 * s / F.len);
-        ctx.fillStyle = '#ff3b5c'; ctx.fillRect(x, y - (th >> 1), 1, th);
-        px(x, y - (th >> 1), '#ffb3c1');
-      }
+      if (F.kind === 'bat') {
+        ctx.fillStyle = '#5a5470'; ctx.fillRect(Math.round(F.px), Math.round(F.top), 1, Math.max(0, Math.round(F.py - F.top)));   // (the rod it hangs from)
+        arm(F.px, F.py, F.ang, F.len - 3, 1, 1, '#c9c8d8');
+        arm(F.px + Math.cos(F.ang) * (F.len - 3), F.py + Math.sin(F.ang) * (F.len - 3), F.ang, 3, 5, 5, '#ff9a1f', '#ffe08a');
+      } else arm(F.px, F.py, F.ang, F.len, 4, 2, F.kind === 'catapult' ? '#3ff8ff' : '#ff3b5c', F.kind === 'catapult' ? '#c8ffff' : '#ffb3c1');
       ctx.fillStyle = '#e9e6ff'; ctx.fillRect(Math.round(F.px) - 1, Math.round(F.py) - 1, 3, 3); px(Math.round(F.px), Math.round(F.py), '#6a6488');
+    }
+  }
+  // the windmills, see-saws, escalators, pusher bars, drums and rollers
+  function drawMovers(t) {
+    for (const E of K.escs) {
+      // its side, the steps riding up it (the treads level, the risers moving), the landing and a handrail
+      const n = Math.abs(E.x1 - E.x0), dir = Math.sign(E.x1 - E.x0);
+      for (let i = 0; i <= Math.abs(E.x2 - E.x0); i++) {
+        const x = E.x0 + dir * i, yt = i <= n ? E.y0 + (E.top - E.y0) * i / n : E.top, yb = yOn(E.sp, x);
+        ctx.fillStyle = '#3a3450'; ctx.fillRect(Math.round(x), Math.round(yt) + 1, 1, Math.max(0, Math.round(yb - yt) - 1));
+        const ph = ((i - t * 75 * 0.9) % 4 + 4) % 4;
+        px(Math.round(x), Math.round(yt), i > n ? '#c8c8d8' : ph < 1 ? '#ffe600' : '#a8a8bc');
+        if (i <= n + 3) px(Math.round(x), Math.round(yt) - 7, '#16121e');   // (the handrail)
+      }
+    }
+    for (const M of K.movs) {
+      if (M.type === 'spin') {
+        for (let j = 0; j < M.n; j++) {
+          const a = M.th + j * 6.283 / M.n, wide = M.n > 4;   // (a paddle wheel's arms end in paddles)
+          arm(M.x, M.y, a, M.L, wide ? 1 : 2, wide ? 1 : 2, wide ? '#8a5a3a' : '#ffe600', wide ? null : '#fff3a8');
+          if (wide) arm(M.x + Math.cos(a) * (M.L - 4), M.y + Math.sin(a) * (M.L - 4), a, 4, 3, 3, '#ff9a1f', '#ffe08a');
+          else px(Math.round(M.x + Math.cos(a) * M.L), Math.round(M.y + Math.sin(a) * M.L), '#ff3bd0');
+        }
+        ctx.fillStyle = '#c9c8d8'; ctx.fillRect(Math.round(M.x) - 1, Math.round(M.y) - 1, 3, 3); px(Math.round(M.x), Math.round(M.y), '#ff3bd0');
+      } else if (M.type === 'bridge') {
+        // its posts, the hand rope sagging between them, and the planks
+        const B = M.B, sag = x => Math.sin(Math.PI * (x - B.x0) / (B.x1 - B.x0));
+        for (const x of [B.x0, B.x1]) { ctx.fillStyle = '#5a3a24'; ctx.fillRect(Math.round(x), Math.round(yOn(B.sp, x)) - 9, 1, 9); }
+        for (let x = Math.ceil(B.x0); x <= B.x1; x++) {
+          const y = yOn(B.sp, x) + B.D * sag(x);
+          px(x, Math.round(y - 8 + B.D * 0.6 * sag(x)), '#c8a46a');   // (the rope)
+          if ((x - Math.ceil(B.x0)) % 4 !== 3) { px(x, Math.round(y), '#c8955a'); px(x, Math.round(y) + 1, '#8a5a3a'); }   // (planks, with gaps)
+        }
+      } else if (M.type === 'pusher') {
+        // the slot, and the bar while it's up
+        for (let i = 0; i <= M.len; i++) { const x = M.x0 + M.f * i; px(Math.round(x), Math.round(yOn(M.sp, x)) - 1, '#16121e'); }
+        if (M.bar.on) { ctx.fillStyle = '#3ff8ff'; ctx.fillRect(Math.round(M.bar.ax) - 1, Math.round(M.bar.by), 2, 7); px(Math.round(M.bar.ax) - 1, Math.round(M.bar.by), '#fff'); }
+      } else if (M.type === 'saw') {
+        // the fulcrum, then the plank
+        const fy = yOn(M.sp, M.x);
+        for (let dy = 0; dy <= fy - M.y; dy++) { ctx.fillStyle = '#5a5470'; ctx.fillRect(Math.round(M.x - dy * 0.8), Math.round(M.y + dy), Math.round(dy * 1.6) + 1, 1); }
+        arm(M.x - Math.cos(M.a) * M.L / 2, M.y - Math.sin(M.a) * M.L / 2, M.a, M.L, 2, 2, '#8a5a3a', '#c8955a');
+        if (M.skirt.on) { ctx.fillStyle = '#6a4028'; ctx.fillRect(Math.round(M.skirt.ax), Math.round(M.skirt.ay), 1, Math.round(M.skirt.by - M.skirt.ay)); }
+      }
+    }
+    for (const c of K.drums) {
+      // stripes going round as it spins
+      const R = c.r, cx = Math.round(c.x), cy = Math.round(c.y);
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const d = Math.hypot(dx, dy); if (d > R + 0.3) continue;
+        if (c.kind === 'hump' && cy + dy > yOn(c.sp, clamp(cx + dx, c.sp.xa, c.sp.xb)) - 0.5) continue;   // (only its top shows, over the track)
+        const a = Math.atan2(dy, dx) - c.ang, st = ((a / 6.283 * (c.kind === 'drum' ? 8 : 4)) % 1 + 1) % 1;
+        px(cx + dx, cy + dy, d > R - 0.8 ? '#1f1830' : c.kind === 'drum' ? (st < 0.5 ? '#ff3b5c' : '#fffaf0') : c.kind === 'hump' ? (st < 0.5 ? '#ff3bd0' : '#3ff8ff') : (st < 0.5 ? '#c8c8d8' : '#6a6488'));
+      }
+      if (c.kind !== 'hump') px(cx, cy, '#e8b84a');
     }
   }
 
@@ -1867,12 +2094,12 @@
       if (lined && p.vis) {
         const wd = uctx.measureText(w.name).width + 6;
         const free = l => !placed.some(q => q.lv === l && Math.abs(q.x - p.x) < (q.wd + wd) / 2 && Math.abs(q.top - p.top) < ns * 1.2);
-        lv = w.lv != null && free(w.lv) && (w.lv === 0 || !free(0)) ? w.lv : 0;
+        lv = w.nameLv != null && free(w.nameLv) && (w.nameLv === 0 || !free(0)) ? w.nameLv : 0;
         while (!free(lv)) lv++;
         placed.push({ x: p.x, top: p.top, wd, lv });
       }
-      w.lv = lv;
-      w.lift = (w.lift ?? 0) + (lv * (ns + 1) - (w.lift ?? 0)) * k;
+      w.nameLv = lv;
+      w.nameLift = (w.nameLift ?? 0) + (lv * (ns + 1) - (w.nameLift ?? 0)) * k;
     }
   }
   function drawNames() {
@@ -1886,7 +2113,7 @@
     if (R3) liftNames3D(lined, ns);
     let i = 0;
     for (const w of order) {
-      const lift = R3 ? w.lift : lined ? (i++ & 1) * (ns + 1) : 0, p = w.scr = R3 ? w.scr : screenOf(w);
+      const lift = R3 ? w.nameLift : lined ? (i++ & 1) * (ns + 1) : 0, p = w.scr = R3 ? w.scr : screenOf(w);
       if (!p.vis) continue;
       const x = p.x, y = p.top - 4 - lift;
       w.ly = y - ns;   // (the top of the name, for the bubble to sit over)
@@ -2107,6 +2334,7 @@
     drawHops();
     for (const c of K.bumpers) drawBumper(Math.round(c.x), Math.round(c.y), c.r, c.lit > 0);
     drawFlippers();
+    drawMovers(t);
     drawDominoes();
     drawCones();
     drawLamps(t);
@@ -2336,6 +2564,22 @@
     if (h === 'join') { const o = ownerId(); if (racers.has(o.key) && state === 'lobby') leave(o.key); else join(o.key, o.name, o.color); updateHost(); }
     if (h === 'start') startRace();
     if (h === 'track') newTrack();
+  });
+  // the 2D / 3D switch, top right: saved, and the source reloads in that view
+  const viewsEl = document.createElement('div');
+  viewsEl.id = 'views';
+  viewsEl.innerHTML = `<button class="sp-btn" data-v="2d" title="The 2D pixel-art machine">2D</button><button class="sp-btn" data-v="3d" title="The 3D track">3D</button>`;
+  for (const b of viewsEl.children) b.classList.toggle('on', b.dataset.v === CFG.view);
+  document.body.appendChild(viewsEl);
+  viewsEl.addEventListener('click', e => {
+    const v = e.target.dataset && e.target.dataset.v;
+    if (!v || v === CFG.view) return;
+    let saved = false;
+    try { const o = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; o.view = v; localStorage.setItem(STORE_KEY, JSON.stringify(o)); saved = true; } catch (err) {}
+    // (a view in the source's URL wins over the saved one, so that's changed too, as is the URL if it can't save)
+    const u = new URL(location.href);
+    if (u.searchParams.has('view') || !saved) u.searchParams.set('view', v);
+    location.replace(u.toString());
   });
   function updateHost() {
     const o = ownerId(), inRace = racers.has(o.key) || nextUp.has(o.key), lobby = state === 'lobby';

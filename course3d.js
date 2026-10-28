@@ -6,7 +6,11 @@
 // where the last left off: straights, banked turns, helixes spiralling down, corkscrew loops, jumps (a
 // conveyor feeds the lip, so everyone flies the same way), glass funnels the balls spiral down through onto
 // the track below, roulette wheels they spin round and settle into a pocket of, halfpipes they swing from
-// wall to wall down, whack-a-mole fields of moles popping up, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
+// wall to wall down, whack-a-mole fields of moles popping up, spinning turnstiles, paddle wheels, hammers
+// swinging across, see-saws, escalators, beds of spinning rollers, pistons punching out of the rails, flipper
+// gauntlets, marble runs where the track splits into narrow lanes (walled, or wire) that corkscrew round
+// and cross over and under each other or twist round each other like a rope, tornado spirals, spinning
+// turntables set into the track, swaying rope bridges, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
 // of dice, chips and bumpers to weave between, and lane splits with something different down each side,
 // then a finish arch. It turns back toward the middle before it wanders too far, and a piece that would run
 // into track already there is built some other way.
@@ -131,10 +135,66 @@ export function createCourse(g) {
     const q = Math.sqrt(Math.max(1e-4, R * R - Math.min(d, R) ** 2));
     return [m * (R - q), m * Math.sign(u) * d / q, m * R * R / (q * q * q)];
   }
-  const ubAt = (p, s) => p.pipe ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : UB;
+  const ubAt = (p, s) => p.pipe ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : p.ub ?? UB;
+
+  // A piece along a path given as a function of how far along it is (0..1), its points spaced evenly; up
+  // off it is as near straight up as it can be. (The marble run's lanes.)
+  const LANE = { hw: 4.25, A: 12.5, H: 10 };
+  function pathPiece(kind, pos, o = {}) {
+    const M = 800, pts = [], cum = [0];
+    for (let k = 0; k <= M; k++) pts.push(pos(k / M));
+    for (let k = 1; k <= M; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1], pts[k][2] - pts[k - 1][2]));
+    const len = cum[M], n = Math.ceil(len / 1.5) + 1, ds = len / (n - 1);
+    const P = new Float64Array(3 * n), T = new Float64Array(3 * n), N = new Float64Array(3 * n), B = new Float64Array(3 * n);
+    for (let i = 0, k = 0; i < n; i++) {
+      const s = i * ds; while (k < M - 1 && cum[k + 1] < s) k++;
+      const f = clamp((s - cum[k]) / Math.max(1e-9, cum[k + 1] - cum[k]), 0, 1), a = pts[k], b = pts[k + 1];
+      let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2]; const tl = Math.hypot(tx, ty, tz); tx /= tl; ty /= tl; tz /= tl;
+      let nx = -ty * tx, ny = 1 - ty * ty, nz = -ty * tz; const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
+      P.set([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f], i * 3); T.set([tx, ty, tz], i * 3); N.set([nx, ny, nz], i * 3);
+      B.set([ty * nz - tz * ny, tz * nx - tx * nz, tx * ny - ty * nx], i * 3);
+    }
+    return finish({ kind, len, n, ds, P, T, N, B }, o);
+  }
+
+  // ---- moving things ----
+  // A flipper hinged at (ps, pu): its arm points at angle psi0 at rest (0 is down the track, toward +u is
+  // positive) and flicks round by `sweep`. Sensor ones flick when a ball comes near.
+  function flipper(p, ps, pu, psi0, sweep, len, sensor = false) {
+    const F = { p, ps, pu, psi0, sweep, len, psi: psi0, k: 0, st: 0, next: rnd(0.4, 2.5), sensor, cool: 0, seg: { e: 0.3 } };
+    (p.flips ||= []).push(F);
+    return F;
+  }
+  // a turnstile: n arms of length L round a hub at (s, u), turning flat over the track
+  function spinner(p, s, u, n, L) {
+    const M = { type: 'spin', p, cs: s, cu: u, L, n, th: rnd(0, TAU), w: pick([-1, 1]) * rnd(1.6, 2.6), segs: [] };
+    for (let k = 0; k < n; k++) { const sg = { as: s, au: u, bs: s, bu: u, e: 0.5 }; M.segs.push(sg); p.segs.push(sg); }
+    post(p, s, u, 1.6, 'hub', { e: 0.4 });
+    (p.movs ||= []).push(M);
+  }
+  // A paddle wheel: n paddles round an axle across the track, h above it; the ones down low enough to meet a
+  // ball are walls across the track, moving on down it.
+  function paddleWheel(p, s) {
+    const R = 9, n = 6, h = R - 0.6, M = { type: 'paddle', p, cs: s, R, h, n, th: rnd(0, TAU), w: 70 / (h - RW), segs: [] };
+    for (let k = 0; k < n; k++) { const sg = { as: s, au: -RAIL + 0.2, bs: s, bu: RAIL - 0.2, e: 0.2, on: false }; M.segs.push(sg); p.segs.push(sg); }
+    (p.movs ||= []).push(M);
+  }
+  // a hammer swinging across the track from a gantry over it: its head is a post moving from side to side
+  function hammer(p, s) {
+    const A = fits(3.2), o = post(p, s, 0, 3.2, 'hammer', { e: 0.6, vs: 0, vu: 0 });
+    (p.movs ||= []).push({ type: 'slide', p, o, u0: 0, A, w: rnd(1.8, 2.6), ph: rnd(0, TAU) });
+  }
+  // a piston in the rail on one side, punching out to just past the middle of the track and back
+  function piston(p, s, side) {
+    const wd = 7, R0 = RAIL - 0.2, front = { as: s - wd / 2, au: side * R0, bs: s + wd / 2, bu: side * R0, e: 0.3, vs: 0, vu: 0 };
+    // (its upstream side slants back to the rail, so balls coming down along it slide off round it)
+    const sa = { as: s - wd / 2 - 6, au: side * R0, bs: s - wd / 2, bu: side * R0, e: 0.3, piston: true }, sb = { as: s + wd / 2, au: side * R0, bs: s + wd / 2, bu: side * R0, e: 0.3, piston: true };
+    p.segs.push(front, sa, sb);
+    (p.movs ||= []).push({ type: 'piston', p, s, side, wd, E: RAIL + 2, w: rnd(1.6, 2.2), ph: rnd(0, TAU), front, sa, sb, e: 0 });
+  }
 
   // ---- what goes on the track ----
-  const post = (p, s, u, r, kind, o = {}) => p.obs.push({ s, u, r, kind, e: 0.5, lit: 0, ...o });
+  const post = (p, s, u, r, kind, o = {}) => { const q = { s, u, r, kind, e: 0.5, lit: 0, ...o }; p.obs.push(q); return q; };
   const bumper = (p, s, u) => post(p, s, u, 4.5, 'bumper', { kick: 95, e: 0.6 });
   // Nothing stands where a ball could be wedged between it and a rail: a ball always fits past every post on
   // both sides, or the post is set into the rail itself.
@@ -162,7 +222,7 @@ export function createCourse(g) {
     const used = [];
     if (p.kind === 'loop' || p.len < 40) return used;
     for (let s = rnd(14, 26); s < p.len - 30; s += rnd(...every)) {
-      if (p.regions.some(r => s + 30 > r.a && s - 4 < r.b) || p.obs.some(o => Math.abs(o.s - s - 15) < 20)) continue;
+      if (p.regions.some(r => s + 30 > r.a && s - 4 < r.b) || p.obs.some(o => Math.abs(o.s - s - 15) < 20) || (p.blocks || []).some(([a, b]) => s + 30 > a && s - 4 < b)) continue;
       const side = p.turnSign && Math.random() < 0.8 ? -p.turnSign : pick([-1, 1]);
       p.segs.push({ as: s, au: side * (RAIL - 1.4), bs: s + 11, bu: side * (RAIL - 8), e: 0.55, kick: 50, deflector: true });
       if (Math.random() < 0.65) {
@@ -173,12 +233,43 @@ export function createCourse(g) {
     }
     return used;
   }
+  // A deflector on the rail on one side at s: from the rail, angling in and on down the track.
+  const deflector = (p, s, side) => p.segs.push({ as: s, au: side * (RAIL - 1.4), bs: s + 11, bu: side * (RAIL - 8), e: 0.55, kick: 50, deflector: true });
+  // The end of a curve, which has flung the balls out against its outside rail: a bumper in the middle, then
+  // one on each rail, right up against it, so wherever a ball comes round it's knocked somewhere new (and
+  // there's plenty of room between them).
+  function curveEnd(p) {
+    if (p.len < 60) return;
+    const e = p.len;
+    bumper(p, e - 30, 0);
+    for (const sd of [-1, 1]) bumper(p, e - 8, sd * (RAIL - 0.08 - 4.5));
+    (p.blocks ||= []).push([e - 38, e]);
+  }
+  // Deflectors along both rails of an obstacle's stretch, from a to b, one side then the other, so no ball
+  // gets past along a rail: only where a ball always fits between one and anything else, moving or not.
+  function railKickers(p, a, b) {
+    const dist = (ps, pu, s0, u0, s1, u1) => {   // (from a point to a segment)
+      const ex = s1 - s0, ey = u1 - u0, k = clamp(((ps - s0) * ex + (pu - u0) * ey) / (ex * ex + ey * ey || 1), 0, 1);
+      return Math.hypot(ps - s0 - ex * k, pu - u0 - ey * k);
+    };
+    const gap = 2 * RW + 0.6;
+    let side = pick([-1, 1]);
+    for (let s = a; s < b - 11; s += rnd(22, 30), side = -side) {
+      const s0 = s, u0 = side * (RAIL - 1.4), s1 = s + 11, u1 = side * (RAIL - 8), near = (ps, pu, r) => dist(ps, pu, s0, u0, s1, u1) < r + gap;
+      if (p.obs.some(o => near(o.s, o.u, o.r))) continue;
+      if ((p.movs || []).some(M => M.type === 'spin' ? near(M.cs, M.cu, M.L) : M.type === 'slide' ? near(M.o.s, M.u0 - M.A, M.o.r) || near(M.o.s, M.u0 + M.A, M.o.r) : M.type === 'piston' ? Math.abs(M.s - s - 5) < 22 : M.type === 'paddle' ? Math.abs(M.cs - s - 5) < 16 : false)) continue;
+      if ((p.flips || []).some(F => near(F.ps, F.pu, F.len))) continue;
+      if (p.segs.some(sg => !sg.deflector && sg.on !== false && Math.min(dist(sg.as, sg.au, s0, u0, s1, u1), dist(sg.bs, sg.bu, s0, u0, s1, u1), dist(s0, u0, sg.as, sg.au, sg.bs, sg.bu), dist(s1, u1, sg.as, sg.au, sg.bs, sg.bu)) < gap)) continue;
+      if ((p.pads || []).some(P => near(P.s, P.u, P.r)) || p.doms.some(D => D.side === side && D.ds.some(x => x > s - 4 && x < s + 15)) || p.cones.some(c => Math.sign(c.u) === side && c.s > s - 4 && c.s < s + 15)) continue;
+      deflector(p, s, side);
+    }
+  }
   function dress(p) {
     // deflectors kicking balls off the rails, dominoes and cones along the edges (where there aren't
     // deflectors), lamps beside it
     if (p.kind === 'loop' || p.len < 40) return;
     // (and nothing on top of boost pads or conveyors)
-    const used = deflectors(p).concat(p.regions.map(r => [r.a, r.b])), clear = (a, b) => !used.some(([u0, u1]) => b > u0 && a < u1);
+    const used = deflectors(p).concat(p.regions.map(r => [r.a, r.b]), p.blocks || []), clear = (a, b) => !used.some(([u0, u1]) => b > u0 && a < u1);
     const ds = rnd(6, Math.max(7, p.len - 60));
     if (Math.random() < 0.35 && clear(ds, ds + 50)) dominoes(p, ds, pick([-1, 1]));
     const s0 = rnd(6, p.len - 20);
@@ -187,13 +278,15 @@ export function createCourse(g) {
   }
 
   // ---- features: one or more pieces that carry on from the turtle ----
-  const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2 };
+  const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2,
+    spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
     if (kind === 'straight') { const p = add(straight(rnd(70, 140), -rnd(0.06, 0.12))); if (Math.random() < 0.4) p.regions.push({ a: p.len * 0.4, b: p.len * 0.4 + 14, boost: 165 }); dress(p); }
-    else if (kind === 'turn') dress(add(turn(pick([-1, 1]) * rnd(0.9, 2.4), rnd(55, 95), -rnd(0.05, 0.1))));
-    else if (kind === 'helix') deflectors(add(turn(pick([-1, 1]) * rnd(TAU * 0.9, TAU * 1.6), rnd(45, 60), -rnd(0.16, 0.22), { kind: 'helix' })), [45, 70]);
+    else if (kind === 'turn') { const p = add(turn(pick([-1, 1]) * rnd(0.9, 2.4), rnd(55, 95), -rnd(0.05, 0.1))); curveEnd(p); dress(p); }
+    else if (kind === 'tornado') { const p = add(turn(pick([-1, 1]) * rnd(TAU * 2.5, TAU * 3.5), rnd(34, 40), -0.26, { kind: 'helix' })); curveEnd(p); deflectors(p, [45, 70]); }   // (a tight spiral, round and round)
+    else if (kind === 'helix') { const p = add(turn(pick([-1, 1]) * rnd(TAU * 0.9, TAU * 1.6), rnd(45, 60), -rnd(0.16, 0.22), { kind: 'helix' })); curveEnd(p); deflectors(p, [45, 70]); }
     else if (kind === 'loop') {
       const R = rnd(16, 22), lead = add(straight(60, 0, { kind: 'straight' }));
       lead.regions.push({ a: 20, b: 40, boost: 190 });
@@ -262,24 +355,162 @@ export function createCourse(g) {
       // whack-a-mole: rows of holes, two across then one in the middle, with moles popping up out of them
       const p = add(straight(rnd(130, 160), -0.12, { kind: 'moles' }));
       for (let s = 30, row = 0; s < p.len - 20; s += 13, row++) for (const u of row % 2 ? [0] : [-7.2, 7.2]) post(p, s, u, 3.2, 'mole', { e: 0.5, up: 0, next: rnd(0.3, 3), until: 0, rose: -9 });
+      railKickers(p, 14, p.len - 10);
       add(straight(30, -0.06));
+    } else if (kind === 'spinners') {
+      // turnstiles: crosses (or bars) turning flat over the track, batting the balls along; each leaves a way past on one side
+      const p = add(straight(rnd(130, 160), -0.1, { kind: 'spinners' }));
+      for (let s = 32; s < p.len - 26; s += rnd(30, 38)) spinner(p, s, pick([-1, 0, 0, 1]) * rnd(2, 5), ri(2, 4), rnd(8, 9.5));
+      railKickers(p, 14, p.len - 10);
+    } else if (kind === 'paddles') {
+      // paddle wheels turning over the track, their paddles sweeping down behind the balls and shoving them on
+      const p = add(straight(rnd(120, 150), -0.1, { kind: 'paddles' }));
+      paddleWheel(p, rnd(36, 46));
+      if (p.len > 130) paddleWheel(p, p.len - 34);
+    } else if (kind === 'hammers') {
+      // hammers swinging across the track from gantries over it
+      const p = add(straight(rnd(140, 170), -0.12, { kind: 'hammers' }));
+      for (let s = 34; s < p.len - 24; s += rnd(26, 34)) hammer(p, s);
+      railKickers(p, 14, p.len - 10);
+    } else if (kind === 'seesaw') {
+      // a see-saw across the whole track: down at this end, so the balls roll on and up it, and as they go
+      // over the middle it tips and drops them off the far end
+      const p = add(straight(rnd(120, 140), -0.06, { kind: 'seesaw' }));
+      const L = 44, hp = 2.6;
+      p.saw = { s0: p.len / 2, L, hp, thm: Math.asin(hp / (L / 2)), th: -Math.asin(hp / (L / 2)), thd: 0, load: 0 };
+    } else if (kind === 'escalator') {
+      // an escalator: a conveyor of steps carrying the balls up a rise, and over the top
+      const e = add(straight(60, 0.26, { kind: 'escalator', style: 'track' }));
+      e.regions.push({ a: 0, b: e.len, belt: 70, esc: true });
+      add(straight(50, -0.12));
+    } else if (kind === 'rollers') {
+      // beds of spinning rollers set into the track: some roll the balls across to one side, some speed them on
+      const p = add(straight(rnd(140, 170), -0.1, { kind: 'rollers' }));
+      let s = 28;
+      while (s < p.len - 34) {
+        const len = rnd(18, 26), side = pick([-1, 1, 0]);
+        if (side) p.regions.push({ a: s, b: s + len, roll: { vu: side * 75 }, u0: -RAIL, u1: RAIL });
+        else p.regions.push({ a: s, b: s + len, roll: { vs: 140 }, u0: -RAIL, u1: RAIL });
+        s += len + rnd(16, 26);
+      }
+    } else if (kind === 'pistons') {
+      // pistons punching out of the rails and back, one side then the other (never two at once, so a ball's
+      // never squeezed)
+      const p = add(straight(rnd(140, 170), -0.1, { kind: 'pistons' }));
+      let side = pick([-1, 1]);
+      for (let s = 34; s < p.len - 24; s += rnd(24, 30), side = -side) piston(p, s, side);
+    } else if (kind === 'flippers') {
+      // a flipper gauntlet: flippers on the rails and back to back in the middle, at all sorts of angles,
+      // flicking when a ball comes by and batting it back across the track
+      const p = add(straight(rnd(170, 200), -0.16, { kind: 'flippers' }));
+      for (let s = 30, i = 0; s < p.len - 26; s += rnd(26, 34), i++) {
+        if (i % 2 === 0) { const sd = pick([-1, 1]); flipper(p, s, sd * (RAIL - 2.4), -sd * rnd(0.4, 0.9), -sd * rnd(0.9, 1.3), 11, true); }
+        else { for (const sd of [-1, 1]) flipper(p, s, sd * 2.2, sd * rnd(0.5, 0.9), sd * rnd(0.8, 1.1), 10, true); bumper(p, s - 2.5, 0); }   // (a bumper where they meet, so nothing balances there)
+      }
+      railKickers(p, 14, p.len - 10);
+    } else if (kind === 'bridge') {
+      // a rope bridge: planks hung between two towers, sagging in the middle and swaying from side to side
+      // (most in the middle), which rolls the balls on it toward whichever side's down
+      add(straight(30, -0.06));
+      const L = rnd(110, 150), D = rnd(6, 10), yaw = tur.yaw;
+      add(sweep('bridge', L, f => [yaw, Math.atan(-D * Math.PI / L * Math.cos(Math.PI * f) - 0.06), 0], { style: 'bridge', bridge: { A: rnd(0.16, 0.26), w: rnd(1.4, 2.2), ph: rnd(0, TAU), roll: 0 } }));
+      add(straight(30, -0.06));
+    } else if (kind === 'spinpads') {
+      // turntables set into the track, spinning: a ball rolling onto one is swept round with it, and off
+      const p = add(straight(rnd(130, 160), -0.1, { kind: 'spinpads' }));
+      p.pads = [];
+      for (let s = 26; s < p.len - 24;) {
+        const r = rnd(6, 10.5), u = rnd(-1, 1) * (RAIL - 0.6 - r);
+        p.pads.push({ s: s + r, u, r, w: pick([-1, 1]) * rnd(2.5, 4), th: rnd(0, TAU) });
+        s += 2 * r + rnd(8, 16);
+      }
+      railKickers(p, 14, p.len - 10);
+    } else if (kind === 'braid' || kind === 'wiremaze' || kind === 'knot') {
+      // A marble run: the track splits into three narrow lanes, which come back together onto a wide track
+      // further on, down a run whose axis turns and slopes down as it goes. Each ball goes down whichever
+      // lane it's nearest as it gets there.
+      // - braid: lanes with walls. The middle one runs down the axis; the other two corkscrew round it, and
+      //   round each other, a turn or a turn and a half, never nearer it than they can pass.
+      // - wiremaze: wire tracks. The outer two swing wide and cross right over to the other side, one over
+      //   the middle lane and the other under it; the middle one weaves between them.
+      // - knot: all three twist round the axis like the strands of a rope, two or three times round (walled
+      //   or wire)
+      const knot = kind === 'knot', wire = kind === 'wiremaze' || (knot && Math.random() < 0.5), lead = add(straight(50, -0.08));
+      const y0 = tur.yaw, turnBy = pick([-1, 1]) * (kind === 'braid' ? rnd(0.4, 1.0) : rnd(0.8, 1.5)), len = knot ? rnd(320, 380) : rnd(260, 320);
+      const m = knot ? pick([2, 3]) : pick([1, 1.5]), pitch = knot ? -0.18 : -0.13, AX = 400, axis = [];
+      let x = tur.x, y = tur.y, z = tur.z;
+      for (let k = 0; k <= AX; k++) {
+        const yaw = y0 + turnBy * smooth(k / AX);
+        axis.push({ x, y, z, yaw });
+        x += Math.cos(pitch) * Math.cos(yaw) * len / AX; y += Math.sin(pitch) * len / AX; z += Math.cos(pitch) * Math.sin(yaw) * len / AX;
+      }
+      const at = t => {   // (between the samples, smoothly)
+        const f = clamp(t, 0, 1) * AX, i = Math.min(AX - 1, Math.floor(f)), k = f - i, a = axis[i], b = axis[i + 1];
+        return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, yaw: a.yaw + (b.yaw - a.yaw) * k };
+      }, env = t => smooth(clamp(Math.min(t, 1 - t) / 0.18, 0, 1));
+      // each lane: where it starts and ends across the track, and how far across and up from the axis it is
+      let defs;
+      if (knot) {
+        // (they twist only once they've eased in from side by side, and stop before easing back out, so
+        // they never cross on the way)
+        const rho = 9, g = t => smooth(clamp((t - 0.16) / 0.68, 0, 1)), env2 = t => smooth(clamp(Math.min(t, 1 - t) / 0.16, 0, 1));
+        defs = [[-LANE.A, -Math.PI / 2], [0, Math.PI / 6], [LANE.A, 5 * Math.PI / 6]].map(([u0, ph]) => ({ u0, uEnd: u0, off: t => {
+          const th = ph + TAU * m * g(t), e = env2(t);
+          return [u0 + (rho * Math.sin(th) - u0) * e, rho * Math.cos(th) * e];
+        } }));
+      } else if (wire) {
+        const ease = (a, b, f) => a + (b - a) * smooth(clamp(f, 0, 1));
+        const cross = sd => t => t < 0.25 ? ease(sd * LANE.A, sd * 30, t / 0.25) : t < 0.75 ? ease(sd * 30, -sd * 30, (t - 0.25) / 0.5) : ease(-sd * 30, -sd * LANE.A, (t - 0.75) / 0.25);
+        const bump = t => t < 0.2 || t > 0.8 ? 0 : Math.sin(Math.PI * (t - 0.2) / 0.6) ** 2;
+        defs = [
+          { u0: -LANE.A, uEnd: LANE.A, off: t => [cross(-1)(t), 12 * bump(t)] },
+          { u0: 0, uEnd: 0, off: t => [5 * Math.sin(TAU * 2 * t) * env(t), 0] },
+          { u0: LANE.A, uEnd: -LANE.A, off: t => [cross(1)(t), -12 * bump(t)] },
+        ];
+      } else defs = [[-LANE.A, -Math.PI / 2], [0, null], [LANE.A, Math.PI / 2]].map(([u0, ph]) => {
+        // (easing from side by side at the ends into the corkscrew; a turn and a half brings it out on the
+        // other side, so it eases out toward that)
+        const uEnd = ph == null ? 0 : LANE.A * Math.round(Math.sin(ph + TAU * m));
+        return { u0, uEnd, off: t => {
+          if (ph == null) return [0, 0];
+          const th = ph + TAU * m * t, e = env(t), base = t < 0.5 ? u0 : uEnd;
+          return [base + (LANE.A * Math.sin(th) - base) * e, LANE.H * Math.cos(th) * e];
+        } };
+      });
+      const lanes = defs.map(({ u0, uEnd, off }, k) => {
+        const q = pathPiece('lane', t => { const a = at(t), [u, h] = off(t); return [a.x - Math.sin(a.yaw) * u, a.y + h, a.z + Math.cos(a.yaw) * u]; }, { lane: true, wire, ub: LANE.hw - 0.4 - RW, style: 'lane', laneCol: k, u0 });
+        q.nextU = uEnd;
+        q.back = lead;
+        return q;
+      });
+      lead.lanes = lanes;
+      const e = axis[AX];
+      tur = { x: e.x, y: e.y, z: e.z, yaw: e.yaw, pitch };
+      out.push(...lanes);
+      const merge = add(straight(60, -0.08, { noBack: true }));
+      for (const q of lanes) q.next = merge;
     } else if (kind === 'plinko') {
       const p = add(straight(rnd(150, 190), -0.36, { kind: 'plinko' }));
       pins(p, 55, p.len - 12);
+      railKickers(p, 20, p.len - 10);
       add(straight(40, -0.06));
     } else if (kind === 'pinball') {
       const p = add(straight(160, -0.22, { kind: 'pinball' }));
       for (let s = rnd(45, 55); s < 112; s += rnd(18, 26)) bumper(p, s, rnd(-fits(4.5), fits(4.5)));
+      railKickers(p, 20, 106);
       // slingshots angled in from each side above the flippers, and the flippers themselves
       for (const sd of [-1, 1]) p.segs.push({ as: 118, au: sd * (RAIL - 1.4), bs: 132, bu: sd * (RAIL - 6.4), e: 0.9, kick: 70, sling: true });
-      for (const sd of [-1, 1]) p.flips = (p.flips || []).concat({ p, ps: p.len - 16, pu: sd * (RAIL - 2.4), side: sd, len: 11, rest: 0.5, up: -0.55, a: 0.5, st: 0, next: rnd(0.4, 1.8) });
+      for (const sd of [-1, 1]) flipper(p, p.len - 16, sd * (RAIL - 2.4), sd * (0.5 - Math.PI / 2), -sd * 1.05, 11);
       add(straight(40, -0.06));
     } else if (kind === 'posts') {
       const p = add(straight(rnd(120, 170), -0.12, { kind: 'posts' }));
       for (let s = 30; s < p.len - 20; s += rnd(16, 26)) {
         const k = pick(['die', 'chip', 'bumper', 'die']), r = k === 'die' ? 3.6 : k === 'chip' ? 3.8 : 4.5, u = rnd(-fits(r), fits(r));
-        if (k === 'bumper') bumper(p, s, u); else post(p, s, u, r, k, { face: ri(1, 6), e: 0.4, h: ri(2, 4) });
+        if (k === 'bumper') bumper(p, s, u);
+        else if (k === 'die' && Math.random() < 0.3) post(p, s, clamp(u, -fits(4), fits(4)), 4, 'drum', { spin: pick([-1, 1]) * rnd(50, 80), e: 0.4 });   // (a spinning drum)
+        else post(p, s, u, r, k, { face: ri(1, 6), e: 0.4, h: ri(2, 4) });
       }
+      railKickers(p, 14, p.len - 10);
       dress(p);
     } else if (kind === 'lanes') {
       // a wall down the middle: one side has a boost pad, the other a slow conveyor
@@ -310,14 +541,20 @@ export function createCourse(g) {
     for (const p of ps) pending.push(...pointsOf(p));
     while (pending.length > 50) { const e = pending.shift(), k = key(e[0], e[2]); let l = grid.get(k); if (!l) grid.set(k, l = []); l.push(e); }
   }
+  let laneRun = 0;
   function place(ps) {
-    for (const p of ps) { p.i = pieces.length; p.s0 = total; total += p.len; pieces.push(p); }
+    for (const p of ps) {
+      p.i = pieces.length; pieces.push(p);
+      // (the lanes of a marble run all start where it splits; what comes after starts past the longest)
+      if (p.lane) { p.s0 = total; laneRun = Math.max(laneRun, p.len); }
+      else { total += laneRun; laneRun = 0; p.s0 = total; total += p.len; }
+    }
     for (const p of ps) if (p.gapTo != null) { p.landOn = ps[p.gapTo].i; }
     remember(ps);
   }
 
   function build() {
-    pieces = []; total = 0; grid = new Map(); pending = []; styleRun = 0;
+    pieces = []; total = 0; grid = new Map(); pending = []; styleRun = 0; laneRun = 0;
     tur = { x: -BOUND.x * 0.55, y: 0, z: -BOUND.z * 0.45, yaw: 0.25, pitch: -0.03 };
     // the start: a wide pen the balls wait in behind a gate
     const start = straight(130, -0.035, { kind: 'start', style: 'track', noAssist: true });
@@ -333,7 +570,7 @@ export function createCourse(g) {
       if (kind === last && kind !== 'turn') kind = 'turn';
       let ok = false;
       for (let tries = 0; tries < 7 && !ok; tries++) {
-        const keep = tur, ps = kind === 'steer' ? [turn(Math.sign(toC) * clamp(Math.abs(toC) * rnd(1, 1.3), 1.2, Math.PI), rnd(55, 80), -rnd(0.07, 0.12))].map(p => (tur = p.after, p)) : feature(tries > 3 ? 'turn' : kind);
+        const keep = tur, ps = kind === 'steer' ? [turn(Math.sign(toC) * clamp(Math.abs(toC) * rnd(1, 1.3), 1.2, Math.PI), rnd(55, 80), -rnd(0.07, 0.12))].map(p => (tur = p.after, curveEnd(p), p)) : feature(tries > 3 ? 'turn' : kind);
         if (!clashes(ps)) { place(ps); ok = true; last = kind; }
         else { tur = keep; tur = { ...keep, pitch: keep.pitch - 0.05 }; }
       }
@@ -347,7 +584,7 @@ export function createCourse(g) {
     for (const p of pieces) for (let i = 0; i < p.n; i++) for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j], p.P[i * 3 + j]); hi[j] = Math.max(hi[j], p.P[i * 3 + j]); }
     K = {
       three: true, stuck: {}, pieces, total, PIPE, moles: pieces.flatMap(p => p.obs.filter(o => o.kind === 'mole')), wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
-      flippers: pieces.flatMap(p => p.flips || []), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
+      pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge).map(p => p.bridge), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
     };
@@ -380,10 +617,12 @@ export function createCourse(g) {
   const fr = () => ({ P: [0, 0, 0], T: [0, 0, 0], N: [0, 0, 0], B: [0, 0, 0], kB: 0 });
   const F1 = fr();
   // the ball's place in the world, from where it is on its piece (index.html's y points down, so -Y)
+  const rollAt = (p, s) => p.bridge ? p.bridge.roll * Math.sin(Math.PI * clamp(s / p.len, 0, 1)) : 0;
   function place3(w) {
     const p = pieces[w.pi], f = at(p, w.s, w.fr ??= fr());
-    let b = w.u, n = RW;
+    let b = w.u, n = RW + (w.lift || 0);
     if (p.pipe) { const [h, h1] = pipeH(p, w.s, w.u), l = Math.hypot(1, h1); b -= h1 / l * RW; n = h + RW / l; }   // (up a halfpipe's wall, out from it square to it)
+    if (p.bridge) { const r = rollAt(p, w.s), c = Math.cos(r), sn = Math.sin(r); [b, n] = [b * c + n * sn, -b * sn + n * c]; }   // (on a rope bridge, rolled over with it)
     w.X = f.P[0] + f.B[0] * b + f.N[0] * n; w.Y = f.P[1] + f.B[1] * b + f.N[1] * n; w.Z = f.P[2] + f.B[2] * b + f.N[2] * n;
     w.x = w.X; w.y = -w.Y; w.z = w.Z;
   }
@@ -395,8 +634,9 @@ export function createCourse(g) {
     if (d2 >= R * R || d2 < 1e-9) return;
     const d = Math.sqrt(d2), ns = ds / d, nu = du / d;
     w.s = o.s + ns * R; w.u = o.u + nu * R;
-    const vn = w.vs * ns + w.vu * nu;
+    const vn = (w.vs - (o.vs || 0)) * ns + (w.vu - (o.vu || 0)) * nu;   // (relative to it, if it's moving)
     if (vn < 0) { w.vs -= (1 + o.e) * vn * ns; w.vu -= (1 + o.e) * vn * nu + rnd(-6, 6); }   // (never balanced on top of one)
+    if (o.spin) { const vt = -w.vs * nu + w.vu * ns, dv = (o.spin - vt) * 0.6; w.vs -= nu * dv; w.vu += ns * dv; }   // (a spinning drum carries it round)
     if (o.kick && t - (o.hitT || -9) > 0.05) {
       w.vs += ns * o.kick; w.vu += nu * o.kick; o.hitT = t;
       if (w.vs < 30) w.vs = rnd(30, 80);   // (and always on down the track)
@@ -426,8 +666,8 @@ export function createCourse(g) {
       if (Math.abs(nu) < 0.15) w.vu += rnd(-10, 10);   // (never balanced on the end of one)
     }
     // (a flipper's surface is moving)
-    let sv = 0, uv = 0;
-    if (sg.spin) { sv = -sg.spin * (qu - sg.au); uv = sg.spin * (qs - sg.as); }
+    let sv = sg.vs || 0, uv = sg.vu || 0;
+    if (sg.spin) { sv -= sg.spin * (qu - sg.au); uv += sg.spin * (qs - sg.as); }
     const rs = w.vs - sv, ru = w.vu - uv, vn = rs * ns + ru * nu;
     if (vn < 0) { w.vs = rs - (1 + sg.e) * vn * ns + sv; w.vu = ru - (1 + sg.e) * vn * nu + uv; }
     if (sg.kick && t - (sg.hitT || -9) > 0.08) { w.vs += ns * sg.kick; w.vu += nu * sg.kick; sg.hitT = t; sg.lit = 1; emit(w.X, -w.Y, 6, ['#ffe600', '#fff', '#3ff8ff'], 40, 40, 140, undefined, w.Z); }
@@ -448,10 +688,16 @@ export function createCourse(g) {
       else if (w.vs > MINV + 30) w.vs -= (w.vs - MINV) * 0.22 * dt;
     }
     if (p.pipe) { const [, h1, h2] = pipeH(p, w.s, w.u); au = (au - G * ROLL * f.N[1] * h1 - h1 * h2 * w.vu * w.vu) / (1 + h1 * h1); }
+    if (p.bridge) au += G * ROLL * Math.sin(rollAt(p, w.s));   // (a rope bridge's sway rolls it toward the low side)
     w.vu += au * dt; w.vu *= 1 - (p.pipe ? 0.25 : 0.7) * dt;
     for (const r of p.regions) if (w.s >= r.a && w.s < r.b && (r.u0 == null || (w.u >= r.u0 && w.u <= r.u1))) {
       if (r.belt) { w.vs = r.belt; w.vu *= 1 - 4 * dt; }
+      else if (r.roll) { const k = Math.min(1, 7 * dt); if (r.roll.vu) w.vu += (r.roll.vu - w.vu) * k; if (r.roll.vs && w.vs < r.roll.vs) w.vs += (r.roll.vs - w.vs) * k; }
       else if (r.boost && w.vs < r.boost) { w.vs = r.boost; if (!w.boostT) emit(w.X, -w.Y, 8, ['#3ff8ff', '#1a5cff', '#fff'], 40, 30, 100, undefined, w.Z); w.boostT = 0.8; }
+    }
+    for (const P of p.pads || []) {   // (on a turntable: carried round with it)
+      const ds = w.s - P.s, du = w.u - P.u;
+      if (ds * ds + du * du < P.r * P.r) { const k = Math.min(1, 3 * dt); w.vs += (-P.w * du - w.vs) * k; w.vu += (P.w * ds - w.vu) * k; }
     }
     const sp = Math.hypot(w.vs, w.vu); if (sp > VMAX) { w.vs *= VMAX / sp; w.vu *= VMAX / sp; }
     w.s += w.vs * dt; w.u += w.vu * dt;
@@ -466,7 +712,12 @@ export function createCourse(g) {
       hitPost(w, o);
     }
     for (const sg of p.segs) if (sg.on !== false) hitSeg(w, sg);
-    for (const F of p.flips || []) hitSeg(w, F.seg);
+    for (const F of p.flips || []) {
+      hitSeg(w, F.seg);
+      if (F.sensor && F.st === 0 && t > F.cool && Math.hypot(w.s - F.ps, w.u - F.pu) < F.len + RW) F.st = 1;
+    }
+    if (p.saw && seesaw(w, p.saw, dt)) return;
+    if (!p.saw || Math.abs(w.s - p.saw.s0) > p.saw.L / 2) fall(w, dt);
     if (racing) for (const D of p.doms) if (D.start < 0 && Math.abs(w.u - D.side * EDGE) < RW + 2) {
       const i = D.ds.findIndex(s => Math.abs(w.s - s) < RW); if (i >= 0) g.knockDominoes(D, i, { vx: w.vs });
     }
@@ -477,10 +728,15 @@ export function createCourse(g) {
       if (p.kind === 'goal' || w.pi === pieces.length - 1) { w.s = p.len - 0.01; w.vs = 0; }
       else if (p.end === 'air') { at(p, p.len, F1); toAir(w, F1); return; }
       else if (p.end === 'funnel') { place3(w); p.fun.wheel ? toWheel(w, p.fun) : toFunnel(w, p.fun); return; }
+      else if (p.lanes) {   // (a marble run: into the lane nearest across)
+        const q = p.lanes.reduce((a, c) => Math.abs(c.u0 - w.u) < Math.abs(a.u0 - w.u) ? c : a);
+        w.s -= p.len; w.pi = q.i; w.u = clamp(w.u - q.u0, -q.ub, q.ub);
+      }
+      else if (p.next) { w.s -= p.len; w.pi = p.next.i; w.u = clamp(w.u + p.nextU, -UB, UB); }   // (out of a lane)
       else { w.s -= p.len; w.pi++; }
     } else if (w.s < 0) {
-      const q = pieces[w.pi - 1];
-      if (q && !q.end && q.kind !== 'start') { w.pi--; w.s += q.len; }
+      const q = p.noBack ? null : p.back || pieces[w.pi - 1];
+      if (q && !q.end && q.kind !== 'start' && !q.lane) { w.pi = q.i; w.s += q.len; if (p.lane) w.u = clamp(w.u + p.u0, -UB, UB); }
       else { w.s = 0; w.vs = Math.abs(w.vs) * 0.3; }
     }
     place3(w);
@@ -495,6 +751,30 @@ export function createCourse(g) {
     w.vx += f.N[0] * 75; w.vy += f.N[1] * 75; w.vz += f.N[2] * 75;
     emit(w.X, -w.Y, 10, ['#8a5a3a', '#e8d9b0', '#fff'], 40, 50, 160, undefined, w.Z);
     popup(w.X, -w.Y - 8, 'BONK', '#ffe600', w.Z);
+  }
+  // On a see-saw: the plank's height at s is hp - (s - s0)·tan(th). A ball on it rolls down its slope and
+  // weighs on it; one coming up to an end that's up off the track meets it as a wall; and one going off an
+  // end that's up falls off it. (Returns true if it stopped the ball.)
+  function seesaw(w, S, dt) {
+    const a = S.s0 - S.L / 2, b = S.s0 + S.L / 2;
+    if (w.s < a || w.s > b) return false;
+    const tn = Math.tan(S.th), hh = S.hp - (w.s - S.s0) * tn;
+    if ((w.lift || 0) > hh + 0.3) { fall(w, dt); if (w.lift < hh) w.lift = hh; return false; }   // (coming down onto it)
+    if (hh > 1 && (w.ps < a || w.ps > b)) {   // (an end that's up: a wall)
+      const back = w.ps < a ? -1 : 1;
+      w.s = back < 0 ? a - 0.01 : b + 0.01; w.vs = back * Math.abs(w.vs) * 0.3;
+      place3(w); return true;
+    }
+    w.lift = hh; w.liftV = 0;
+    w.vs += G * ROLL * tn * dt;
+    S.load += w.s - S.s0;
+    return false;
+  }
+  // off the track (off the end of a see-saw that's up): falling back down onto it
+  function fall(w, dt) {
+    if (!w.lift) return;
+    w.liftV = (w.liftV || 0) - G * dt; w.lift += w.liftV * dt;
+    if (w.lift <= 0) { w.lift = 0; w.liftV = 0; }
   }
   function toAir(w, f) {
     w.m3 = 'air';
@@ -711,14 +991,39 @@ export function createCourse(g) {
     }
     for (const F of K.flippers) {
       if (F.st === 0 && t >= F.next) F.st = 1;
-      const was = F.a;
-      if (F.st === 1) { F.a = Math.max(F.up, F.a - 15 * dt); if (F.a === F.up) { F.st = 2; F.hold = t + 0.12; } }
+      const was = F.psi, rate = 1 / Math.abs(F.sweep);
+      if (F.st === 1) { F.k = Math.min(1, F.k + 15 * rate * dt); if (F.k === 1) { F.st = 2; F.hold = t + 0.12; } }
       else if (F.st === 2) { if (t > F.hold) F.st = 3; }
-      else if (F.st === 3) { F.a = Math.min(F.rest, F.a + 6 * dt); if (F.a === F.rest) { F.st = 0; F.next = t + rnd(0.5, 2.2); } }
-      // pointing in from its side and down the table at rest; up the table when it flicks
-      const ds = Math.sin(F.a), du = -F.side * Math.cos(F.a);
-      F.seg ??= { e: 0.3 };
-      Object.assign(F.seg, { as: F.ps, au: F.pu, bs: F.ps + ds * F.len, bu: F.pu + du * F.len, spin: -F.side * (F.a - was) / dt });
+      else if (F.st === 3) { F.k = Math.max(0, F.k - 6 * rate * dt); if (F.k === 0) { F.st = 0; F.next = t + (F.sensor ? rnd(2, 5) : rnd(0.5, 2.2)); F.cool = t + 0.4; } }
+      F.psi = F.psi0 + F.sweep * F.k;
+      Object.assign(F.seg, { as: F.ps, au: F.pu, bs: F.ps + Math.cos(F.psi) * F.len, bu: F.pu + Math.sin(F.psi) * F.len, spin: (F.psi - was) / dt });
+    }
+    for (const P of K.pads) P.th += P.w * dt;
+    for (const B of K.bridges) B.roll = B.A * Math.sin(B.w * t + B.ph);
+    for (const M of K.movs) {
+      if (M.type === 'spin') {
+        M.th += M.w * dt;
+        M.segs.forEach((sg, k) => { const a = M.th + k * TAU / M.n; sg.bs = M.cs + M.L * Math.cos(a); sg.bu = M.cu + M.L * Math.sin(a); sg.spin = M.w; });
+      } else if (M.type === 'slide') {
+        const a = M.w * t + M.ph; M.o.u = M.u0 + M.A * Math.sin(a); M.o.vu = M.A * M.w * Math.cos(a);
+      } else if (M.type === 'piston') {
+        const a = M.w * t + M.ph, e = M.E * (0.5 - 0.5 * Math.cos(a)), de = M.E * 0.5 * M.w * Math.sin(a), uf = M.side * (RAIL - 0.2 - e);
+        M.e = e; M.front.au = M.front.bu = uf; M.front.vu = -M.side * de; M.sa.bu = M.sb.bu = uf;
+      } else if (M.type === 'paddle') {
+        // (a paddle at angle phi from straight down meets the balls at s + (h - RW)·tan(phi) while it's low enough)
+        M.th += M.w * dt;
+        const lim = Math.acos(clamp((M.h - RW) / M.R, -1, 1));
+        M.segs.forEach((sg, k) => {
+          const phi = wrap(M.th + k * TAU / M.n);
+          sg.on = Math.abs(phi) < lim;
+          if (sg.on) { const c = Math.cos(phi); sg.as = sg.bs = M.cs + (M.h - RW) * Math.tan(phi); sg.vs = M.w * (M.h - RW) / (c * c); }
+        });
+      }
+    }
+    // the see-saws: tipped by the balls on them, and back down at this end when there are none
+    for (const S of K.saws) {
+      S.thd += (0.03 * S.load - 0.12 - 1.0 * S.thd) * dt; S.th += S.thd * dt; S.load = 0;
+      if (S.th > S.thm) { S.th = S.thm; S.thd = Math.min(0, S.thd); } else if (S.th < -S.thm) { S.th = -S.thm; S.thd = Math.max(0, S.thd); }
     }
   }
   // A ball rolling past a slot machine pulls its lever; on 7-7-7 it pays out, and that ball gets a boost.
@@ -823,5 +1128,5 @@ export function createCourse(g) {
   function open() { pieces[0].gate.on = false; K.doorsOpen = true; K.openT = t; }
   const time = () => t;
 
-  return { build, spawn, open, step, update, time, at, fr, boost, W, HW };
+  return { build, spawn, open, step, update, time, at, fr, boost, rollAt, W, HW };
 }
