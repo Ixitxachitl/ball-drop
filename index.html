@@ -31,6 +31,9 @@
   Race:
     joincmd   join command (default !join; anyone)
     startcmd  start command (default !start; mods and the broadcaster). It needs at least one racer.
+    auto      1 = auto mode: anyone who chats is in, and races start and run by themselves, one after another
+    autowait  auto mode: seconds each race waits from the first racer being in (default 20)
+    autoidle  auto mode: minutes without chatting before someone's left out of the next race (default 10)
     max       most racers in one race (default 40)
     autostart seconds after the first racer joins until it starts by itself (default 0 = off)
     keep      1 = racers stay in for the next race
@@ -255,6 +258,9 @@
     { sec: 'Race' },
     { k: 'joincmd', label: 'Join command', type: 'text', def: '!join', help: 'Anyone in chat can type it to get a wheel in the next race.' },
     { k: 'startcmd', label: 'Start command', type: 'text', def: '!start', help: 'Mods and the broadcaster can start the race with it. There has to be at least one racer.' },
+    { k: 'auto', label: 'Auto mode', type: 'bool', def: false, help: "Anyone who chats is in the race, no command needed, and races start and run by themselves, one after another." },
+    { k: 'autowait', label: 'Auto mode: start after (s)', type: 'num', def: 20, min: 5, max: 300, step: 5, help: 'How long each race waits, from the first racer being in.' },
+    { k: 'autoidle', label: 'Auto mode: quiet for (min)', type: 'num', def: 10, min: 1, max: 120, step: 1, help: "Someone who hasn't chatted for this long isn't in the next race." },
     { k: 'max', label: 'Most racers', type: 'num', def: 40, min: 1, max: 100, step: 1 },
     { k: 'autostart', label: 'Start by itself after (s)', type: 'num', def: 0, min: 0, max: 600, step: 5, help: 'Counted from the first racer joining. 0 = only when someone starts it.' },
     { k: 'keep', label: 'Racers stay in', type: 'bool', def: false, help: 'Everyone who raced is already in the next race, without joining again.' },
@@ -1020,6 +1026,7 @@
   // ---------------- the race ----------------
   const racers = new Map();     // key -> wheel
   const nextUp = new Map();     // joined during a race: in the next one
+  const lastChat = new Map();   // key -> when they last said anything (for auto mode)
   let state = 'lobby', raceT0 = 0, finished = [], winner = null, endAt = 0, resultsUntil = 0, countEnd = 0, autoAt = 0, raceStart = 0;
   let live = [];
 
@@ -1037,17 +1044,19 @@
   }
   function refreshLive() { live = [...racers.values()].filter(w => w.mode !== 'done'); }
 
-  function join(key, name, color) {
+  // (`quiet`: auto mode, where everyone chatting joins, so it doesn't announce each of them)
+  function join(key, name, color, quiet = false) {
     if (racers.has(key)) return;
     if (state !== 'lobby') {
-      if (!nextUp.has(key)) { nextUp.set(key, { name, color }); toast(`${name} is in the next race`); }
+      if (!nextUp.has(key)) { nextUp.set(key, { name, color }); if (!quiet) toast(`${name} is in the next race`); }
       return;
     }
-    if (racers.size >= CFG.max) { toast(`The race is full (${CFG.max} racers)`); return; }
+    if (racers.size >= CFG.max) { if (!quiet) toast(`The race is full (${CFG.max} racers)`); return; }
     const w = makeWheel(key, name, color);
     dropIn(w);
     racers.set(key, w); refreshLive();
-    if (CFG.autostart > 0 && !autoAt) autoAt = performance.now() + CFG.autostart * 1000;
+    const wait = CFG.auto ? CFG.autowait : CFG.autostart;
+    if (wait > 0 && !autoAt) autoAt = performance.now() + wait * 1000;
     updateSign(); updateHost();
   }
   function leave(key) {
@@ -1117,14 +1126,16 @@
     for (const w of racers.values()) removeBubble(w);
   }
   function newLobby() {
-    const keep = CFG.keep ? [...racers.values()].map(w => [w.key, w.name, w.color]) : [];
+    // (in auto mode everyone stays in, as long as they've said something lately)
+    const now = performance.now(), recent = k => !CFG.auto || now - (lastChat.get(k) ?? -Infinity) < CFG.autoidle * 60000;
+    const keep = CFG.keep || CFG.auto ? [...racers.values()].filter(w => recent(w.key)).map(w => [w.key, w.name, w.color]) : [];
     for (const w of racers.values()) removeBubble(w);
     racers.clear(); finished = []; winner = null; endAt = 0;
     show(results, false);
     state = 'lobby'; autoAt = 0;
     build();
-    for (const [k, n, c] of keep) join(k, n, c);
-    for (const [k, m] of nextUp) join(k, m.name, m.color);
+    for (const [k, n, c] of keep) join(k, n, c, CFG.auto);
+    for (const [k, m] of nextUp) if (recent(k)) join(k, m.name, m.color, CFG.auto);
     nextUp.clear();
     refreshLive(); updateSign(); updateHost();
     show(sign, true);
@@ -1159,12 +1170,13 @@
   const sign = $('sign'), banner = $('banner'), results = $('results'), hud = $('hud'), countEl = $('count'), toastEl = $('toast');
   const show = (el, on) => el.classList.toggle('show', on);
   $('s-join').textContent = CFG.joincmd;
+  if (CFG.auto) $('s-join').parentElement.textContent = 'Chat to race';
   let signText = '';
   function updateSign() {
     const n = racers.size;
     let cnt = n ? `${n} racer${n === 1 ? '' : 's'} on the line` : 'Waiting for racers…';
     if (n >= CFG.max) cnt = `Full! ${n} racers`;
-    let hint = `Mods start it with ${CFG.startcmd}`;
+    let hint = CFG.auto ? 'Races start by themselves' : `Mods start it with ${CFG.startcmd}`;
     if (autoAt) hint = `Starting in ${Math.max(0, Math.ceil((autoAt - performance.now()) / 1000))}s`;
     const t = cnt + '|' + hint;
     if (t === signText) return;
@@ -1842,7 +1854,27 @@
   const screenOf = w => R3 ? R3.project(w) : { x: w.x * SCALE, y: w.y * SCALE, top: (w.y - RW) * SCALE, vis: true };
 
   // The names: always over each wheel, in its color with an ink outline. On the starting line they take
-  // turns between two heights, so neighbours don't cover each other.
+  // turns between two heights, so neighbours don't cover each other. (In 3D, where the starting pen's
+  // seen in perspective, a name only goes up a level where it would cover another, and keeps its level
+  // while it can, moving to a new one smoothly.)
+  let namesT = performance.now();
+  function liftNames3D(lined, ns) {
+    const now = performance.now(), k = 1 - Math.exp(-(now - namesT) / 1000 * 8), placed = [];
+    namesT = now;
+    for (const w of live) {   // (in joining order)
+      const p = w.scr = screenOf(w);
+      let lv = 0;
+      if (lined && p.vis) {
+        const wd = uctx.measureText(w.name).width + 6;
+        const free = l => !placed.some(q => q.lv === l && Math.abs(q.x - p.x) < (q.wd + wd) / 2 && Math.abs(q.top - p.top) < ns * 1.2);
+        lv = w.lv != null && free(w.lv) && (w.lv === 0 || !free(0)) ? w.lv : 0;
+        while (!free(lv)) lv++;
+        placed.push({ x: p.x, top: p.top, wd, lv });
+      }
+      w.lv = lv;
+      w.lift = (w.lift ?? 0) + (lv * (ns + 1) - (w.lift ?? 0)) * k;
+    }
+  }
   function drawNames() {
     uctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     uctx.clearRect(0, 0, innerWidth, innerHeight);
@@ -1850,10 +1882,11 @@
     uctx.font = `700 ${ns}px 'Pixelify Sans', system-ui, sans-serif`;
     uctx.textAlign = 'center'; uctx.textBaseline = 'alphabetic'; uctx.lineJoin = 'round';
     uctx.lineWidth = Math.max(3, ns / 3.5); uctx.strokeStyle = '#1f1830';
-    const lined = state === 'lobby' || state === 'count', order = lined ? [...live].sort((a, b) => a.x - b.x) : live;
+    const lined = state === 'lobby' || state === 'count', order = lined && !R3 ? [...live].sort((a, b) => a.x - b.x) : live;
+    if (R3) liftNames3D(lined, ns);
     let i = 0;
     for (const w of order) {
-      const lift = lined ? (i++ & 1) * (ns + 1) : 0, p = w.scr = screenOf(w);
+      const lift = R3 ? w.lift : lined ? (i++ & 1) * (ns + 1) : 0, p = w.scr = R3 ? w.scr : screenOf(w);
       if (!p.vis) continue;
       const x = p.x, y = p.top - 4 - lift;
       w.ly = y - ns;   // (the top of the name, for the bubble to sit over)
@@ -1959,6 +1992,8 @@
     const plain = (text || '').trim(), cmd = plain.split(/\s+/)[0].toLowerCase();
     const key = platform + ':' + lower, nm = String(name).slice(0, 25);
     if (isOwner && platform !== 'demo') ownerSeen(key, nm, color);
+    lastChat.set(key, performance.now());
+    if (CFG.auto) join(key, nm, color, true);
     if (cmd === CFG.joincmd) { join(key, nm, color); return; }
     if (cmd === CFG.startcmd) { if (isOwner || mod) startRace(); return; }
     if (cmd === '!boost') { const w = racers.get(key); if (w && state === 'race' && w.mode !== 'done' && !w.rank && simT - (w.boostAt ?? -9) > 3) { w.boostAt = simT; Math.random() < 0.5 ? boostRacer(w) : blowUp(w); } return; }

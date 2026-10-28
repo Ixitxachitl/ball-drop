@@ -442,6 +442,7 @@ export function createCourse(g) {
     w.vs += as * dt;
     if (p.loop || p.kind === 'loop') w.vs = Math.max(w.vs, p.vmin);
     else if (w.rank) { w.vs *= 1 - 1.2 * dt; w.vu *= 1 - 1.2 * dt; }   // (home: rolling to a stop in the tray at the end)
+    else if (p.noAssist && !racing) { w.vs *= 1 - 3 * dt; w.vu *= 1 - 3 * dt; }   // (waiting in the starting pen: settling down)
     else if (!(p.noAssist && !racing)) {
       if (w.vs < MINV) w.vs += Math.min(MINV - w.vs, 240 * dt);
       else if (w.vs > MINV + 30) w.vs -= (w.vs - MINV) * 0.22 * dt;

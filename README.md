@@ -64,6 +64,10 @@ coming home. In OBS's Interact window you can take over:
 
 All three can be renamed in the settings.
 
+**Auto mode** (`?auto=1`) needs no commands: anyone who chats is in the race, and races start by themselves
+(`autowait` seconds after the first racer is in, default 20) and run one after another. Someone who hasn't
+chatted for `autoidle` minutes (default 10) isn't in the next race.
+
 ## Testing
 
 `index.html?selftest=10` (add `&view=3d` for the 3D course, which needs serving over http) races 30 wheels down 10 fresh machines as fast as it can, with no drawing, and writes
