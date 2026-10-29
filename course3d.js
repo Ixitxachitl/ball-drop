@@ -1280,7 +1280,8 @@ export function createCourse(g) {
       // falling against the next one: no further over than lets its top rest on it, going on over with it,
       // and leaning on it
       if (j >= 0 && j < n && th * sd > 0) {
-        const pj = Math.max(0, D.th[j] * sd), lim = pj + Math.asin(clamp(DOM.gap * Math.cos(pj) / DOM.h, 0, 1));
+        // (its top corner on the next one's face, which swings toward it as that one tips on its far edge)
+        const pj = Math.max(0, D.th[j] * sd), lim = pj + Math.asin(clamp(((DOM.gap + DOM.d) * Math.cos(pj) - DOM.d) / DOM.h, -1, 1));
         if (th * sd > lim) {
           if (w * sd > D.w[j] * sd) D.w[j] = sd * Math.max(D.w[j] * sd, w * sd * 0.8);
           th = sd * lim; w = D.w[j] * sd > 0 ? D.w[j] : 0;
