@@ -19,7 +19,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const TAU = Math.PI * 2;
-const rnd = (a, b) => a + Math.random() * (b - a), pick = a => a[Math.floor(Math.random() * a.length)];
+const rnd = (a, b) => a + Math.random() * (b - a), ri = (a, b) => Math.floor(rnd(a, b + 1)), pick = a => a[Math.floor(Math.random() * a.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ---- textures, drawn on little canvases (pixel art stays crisp) ----
@@ -200,7 +200,7 @@ export function create(g) {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
     for (const m of fading.keys()) unfade(m); fading.clear();
-    D = { carousels: [], ferris: [], fgates: [], tumblers: [], bridges: [], tables: [], dice: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
+    D = { balloons: [], carousels: [], ferris: [], fgates: [], tumblers: [], bridges: [], tables: [], dice: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     // Where the track (and the funnels and roulette wheels) is, so the columns, gears, lamps, slot machines
     // and floating decorations can be kept out of it. clearOf: is something this wide, from y0 up to y1 at
@@ -208,7 +208,8 @@ export function create(g) {
     const TC = 24, tgrid = new Map(), tkey = (x, z) => Math.floor(x / TC) * 7919 + Math.floor(z / TC);
     for (const p of K.pieces) for (let i = 0; i < p.n; i += 2) {
       const k = tkey(p.P[i * 3], p.P[i * 3 + 2]); let l = tgrid.get(k); if (!l) tgrid.set(k, l = []);
-      l.push({ x: p.P[i * 3], y: p.P[i * 3 + 1], z: p.P[i * 3 + 2], p, s: i * p.ds, w: p.lane ? 6 : HW + 2 });
+      l.push({ x: p.P[i * 3], y: p.P[i * 3 + 1], z: p.P[i * 3 + 2], p, s: i * p.ds, w: p.lane ? 6 : p.rail ? p.rail(i * p.ds) + 4 : HW + 2 });
+      if (p.carousel) l.push({ x: p.P[i * 3], y: p.P[i * 3 + 1] + 26, z: p.P[i * 3 + 2], p, s: i * p.ds, w: p.rail(i * p.ds) + 4 });   // (a merry-go-round's canopy)
       if (p.drum) for (const h of [p.drum.R, 2 * p.drum.R]) l.push({ x: p.P[i * 3], y: p.P[i * 3 + 1] + h, z: p.P[i * 3 + 2], p, s: i * p.ds, w: p.drum.R + 2 });   // (a lottery drum's cage, up off it)
     }
     const bowls = K.pieces.filter(p => p.fun).map(({ fun: F }) => ({ x: F.cx, z: F.cz, R: F.R + 6, top: F.cy + 8, bot: F.cy - F.H - 6 }));
@@ -281,7 +282,13 @@ export function create(g) {
         D.tables.push({ p, slats });
         continue;
       }
-      if (p.lane && p.wire) {
+      if (p.rail) {
+        // track bulging out round a merry-go-round: the ordinary track, as wide as its rails are there
+        const H = i => p.rail(i * p.ds) + 1.2;
+        add(sweep(p, i => rect(-H(i), H(i), -3, -0.5), true), lam(C.body));
+        add(sweep(p, i => rect(-H(i) + 0.6, H(i) - 0.6, -0.6, 0), true), lam(C.top));
+        for (const sd of [-1, 1]) add(sweep(p, i => rect(sd > 0 ? H(i) - 1.2 : -H(i), sd > 0 ? H(i) : -H(i) + 1.2, -0.5, 3), true), lam(C.dark));
+      } else if (p.lane && p.wire) {
         // a wire track: two rails the ball rolls on and a guide wire either side, held by brass ribs
         const oct = (cu, ch, r) => Array.from({ length: 6 }, (_, k) => [cu + r * Math.cos(k * TAU / 6), ch + r * Math.sin(k * TAU / 6)]);
         for (const sd of [-1, 1]) { add(sweep(p, oct(sd * 1.6, 0.15, 0.35), true), STEEL); add(sweep(p, oct(sd * 3.6, 2.3, 0.3), true), STEEL); }
@@ -320,6 +327,11 @@ export function create(g) {
           add(sweep(p, rect(sd * (HW - 4) - 0.8, sd * (HW - 4) + 0.8, -0.5, 0), true), STEEL);
           add(sweep(p, rect(sd * HW - 0.5, sd * HW + 0.5, 2.6, 3.4), true), STEEL);
         }
+      } else if (st === 'skee') {
+        // a skee-ball alley: a maple lane between padded red rails on a dark cabinet
+        add(sweep(p, rect(-HW, HW, -4, -0.5), true), lam('#2a1a14'));
+        add(sweep(p, rect(-HW + 0.6, HW - 0.6, -0.6, 0), true, 0, p.n - 1, 0.25), SKEE_LANE);
+        for (const sd of [-1, 1]) add(sweep(p, rect(sd * HW - (sd > 0 ? 1.6 : 0), sd * HW + (sd < 0 ? 1.6 : 0), -0.5, 4), true), lam('#c8343e'));
       } else if (st === 'coaster') {
         // a wooden roller coaster: a plank deck, red running rails and white side boards (on trestles, below)
         add(sweep(p, rect(-HW + 1, HW - 1, -1.8, -0.5), true, 0, p.n - 1, 0.25), PLANKS);
@@ -362,6 +374,12 @@ export function create(g) {
         if (r.roll || r.esc) continue;
         if (r.felt) {   // (a craps table's felt, marked out, stretched over the whole of it)
           add(sweep(p, rect(-K.RAIL, K.RAIL, -0.5, 0.02), true, 0, p.n - 1, 1 / p.len), CRAPS_FELT);
+          continue;
+        }
+        if (r.alley) {   // (a patch of bowling-lane maple under a rack of pins, with its foul line)
+          const a = Math.floor(r.a / p.ds), b = Math.min(p.n - 1, Math.ceil(r.b / p.ds));
+          add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.12), true, a, b, 0.25), SKEE_LANE);
+          add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.12, 0.16), true, a, a + 1), lam('#d42030'));
           continue;
         }
         if (r.chain) {   // (a coaster's lift chain, up the middle)
@@ -536,7 +554,7 @@ export function create(g) {
         }
       }
       for (const P of p.pads || []) {
-        if (P.carousel) { D.carousels.push(carouselOn(p, P)); continue; }
+        if (P.carousel) { if (P === P.carousel.rings[0]) D.carousels.push(...carouselOn(p, P.carousel)); continue; }
         // a turntable: its spinning top just proud of the deck, in a steel ring
         const g0 = onTrack(new THREE.Group(), p, P.s, P.u, 0), top = mesh(new THREE.CylinderGeometry(P.r, P.r, 0.3, 32).translate(0, 0.1, 0), [lam('#3a3450'), new THREE.MeshLambertMaterial({ map: padTex }), lam('#3a3450')]);
         g0.add(top, mesh(new THREE.TorusGeometry(P.r + 0.3, 0.35, 6, 32).rotateX(Math.PI / 2).translate(0, 0.15, 0), STEEL));
@@ -589,11 +607,12 @@ export function create(g) {
         const pieces = Dm.ds.map(s => { const hinge = onTrack(new THREE.Group(), p, s, Dm.side * K.EDGE), tip = new THREE.Group(); tip.add(mesh(domGeo, domMat())); hinge.add(tip); world.add(hinge); return tip; });
         D.doms.push({ Dm, pieces });
       }
-      // cones: turned toward the way they're going over, and tipping on the edge of their base that way
+      // cones and bowling pins: turned toward the way they're going over, and tipping on the edge of their base that way
       for (const c of p.cones) {
-        const grp = new THREE.Group(), yaw = new THREE.Group(), tip = new THREE.Group(), inner = new THREE.Group();
-        tip.position.x = 2.5; inner.position.x = -2.5;
-        inner.add(mesh(coneGeo, coneMat), mesh(new THREE.BoxGeometry(5, 0.8, 5).translate(0, 0.4, 0), DARK));
+        const grp = new THREE.Group(), yaw = new THREE.Group(), tip = new THREE.Group(), inner = new THREE.Group(), rb = c.q.pin ? 1 : 2.5;
+        tip.position.x = rb; inner.position.x = -rb;
+        if (c.q.pin) inner.add(mesh(pinGeo3, PIN_WHITE), mesh(pinStripes, lam('#d42030')));
+        else inner.add(mesh(coneGeo, coneMat), mesh(new THREE.BoxGeometry(5, 0.8, 5).translate(0, 0.4, 0), DARK));
         grp.add(yaw); yaw.add(tip); tip.add(inner); world.add(grp); D.cones.push({ c, grp, yaw, tip });
       }
       // a craps table's dice: each turned as it is (see course3d.js's stepCraps), on the edge it's tipping over
@@ -608,6 +627,61 @@ export function create(g) {
         lamp.add(mesh(new THREE.CylinderGeometry(0.6, 0.8, 20, 8).translate(0, 10, 0), DARK), mesh(new THREE.BoxGeometry(8, 0.8, 0.8).translate(0, 20, 0), DARK));
         for (const gx of [-3.5, 3.5]) { lamp.add(mesh(new THREE.SphereGeometry(1.7, 12, 8).translate(gx, 18.4, 0), glowing('#fff3c0'), false)); const s = glowSprite('#ffe9a0', 16, 0.75); s.position.set(gx, 18.4, 0); lamp.add(s); }
         world.add(lamp);
+      }
+    }
+    // ---- the fairground round the plain stretches of track ----
+    // Strings of bulbs (or bunting) sagging between poles along the rails, bunches of balloons tied to them,
+    // and here and there a stand off to one side on its own platform: a striped tent, a ticket booth or a
+    // popcorn cart.
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const atU = (p, s, u, h) => { const f = frameAt(p, s); return V(f.P[0] + f.B[0] * u + f.N[0] * h, f.P[1] + f.B[1] * u + f.N[1] * h, f.P[2] + f.B[2] * u + f.N[2] * h); };
+    const lumps = (geos, mat, shadow = false) => { if (geos.length) world.add(mesh(mergeGeometries(geos), mat, shadow)); };
+    for (const p of K.pieces) {
+      if (!['straight', 'turn', 'land', 'helix'].includes(p.kind) || p.len < 50) continue;
+      const tube = (p.kind === 'turn' || p.kind === 'straight') && p.len > 60 && (p.i * 7919) % 5 === 0;
+      if (!tube && Math.random() < 0.75) {
+        const flags = Math.random() < 0.35, gap = p.kind === 'helix' ? 22 : 16;
+        for (const sd of Math.random() < 0.4 ? [-1, 1] : [pick([-1, 1])]) {
+          const poles = [], poleG = [], wireG = [], bulbG = FAIR_BULBS.map(() => []), flagG = FAIR_FLAGS.map(() => []);
+          for (let s = 4; s < p.len - 4; s += gap) poles.push(p.lamps.some(L => L.side === sd && Math.abs(L.s - s) < 6) ? null : { base: atU(p, s, sd * (HW + 0.6), 0), top: atU(p, s, sd * (HW + 0.6), 12) });
+          poles.forEach((q, i) => {
+            if (!q) return;
+            poleG.push(beamGeo(q.base, q.top, 0.5));
+            const nx = poles[i + 1]; if (!nx) return;
+            let prev = q.top;
+            for (let k = 1; k <= 8; k++) {
+              const f = k / 8, pt = q.top.clone().lerp(nx.top, f); pt.y -= 9 * f * (1 - f);   // (sagging)
+              wireG.push(beamGeo(prev, pt, 0.12));
+              if (k < 8) {
+                if (flags) { const d = nx.top.clone().sub(q.top).setY(0).normalize().multiplyScalar(0.9); flagG[(i * 7 + k) % FAIR_FLAGS.length].push(new THREE.BufferGeometry().setFromPoints([pt.clone().sub(d), pt.clone().add(d), pt.clone().setY(pt.y - 2.2)])); }
+                else bulbG[(i * 7 + k) % FAIR_BULBS.length].push(new THREE.SphereGeometry(0.45, 6, 4).translate(pt.x, pt.y - 0.5, pt.z));
+              }
+              prev = pt;
+            }
+          });
+          lumps(poleG, DARK, true); lumps(wireG, DARK);
+          bulbG.forEach((gs, k) => lumps(gs, glowing(FAIR_BULBS[k])));
+          flagG.forEach((gs, k) => { gs.forEach(q => q.computeVertexNormals()); lumps(gs, lam(FAIR_FLAGS[k], { side: THREE.DoubleSide })); });
+        }
+      }
+      // balloons tied to the rail
+      for (let k = Math.random() < 0.5 ? ri(1, 2) : 0; k > 0; k--) {
+        const s = rnd(10, p.len - 10), sd = pick([-1, 1]), g0 = new THREE.Group();
+        g0.position.copy(atU(p, s, sd * (HW - 0.6), 3));
+        for (let j = ri(3, 5); j > 0; j--) {
+          const top = V(rnd(-2.5, 2.5), rnd(10, 15), rnd(-2.5, 2.5));
+          g0.add(mesh(new THREE.SphereGeometry(1.6, 12, 8).scale(1, 1.2, 1).translate(top.x, top.y + 1.9, top.z), shiny(pick(FAIR_FLAGS)), false), mesh(beamGeo(V(0, 0, 0), top, 0.08), lam('#fffaf0'), false));
+        }
+        world.add(g0); D.balloons.push({ g0, ph: rnd(0, TAU) });
+      }
+      // a stand off to one side, on its own platform on a column (where there's room for it)
+      if (p.len > 90 && Math.random() < 0.55) {
+        const s = rnd(25, p.len - 25), sd = pick([-1, 1]), st = beside(new THREE.Group(), p, s, sd * (HW + 14)), at0 = st.position;
+        if (p.lamps.some(L => L.side === sd && Math.abs(L.s - s) < 16) || K.slots.some(S => S.p === p && Math.abs(S.s - s) < 34) || !clearOf(at0.x, at0.z, 14, at0.y - 3, at0.y + 30, p, s)) continue;
+        st.add(mesh(new THREE.BoxGeometry(24, 1.4, 22).translate(0, -0.7, 0), PLANKS), mesh(new THREE.BoxGeometry(24.4, 0.6, 22.4).translate(0, -1.6, 0), lam(C.dark)));
+        st.add(fairStand(pick(['tent', 'tent', 'booth', 'cart'])));
+        if (at0.y - ground > 4 && clearOf(at0.x, at0.z, 2, ground, at0.y - 2)) world.add(mesh(new THREE.CylinderGeometry(1.3, 1.6, at0.y - 2 - ground, 8).translate(at0.x, (at0.y - 2 + ground) / 2, at0.z), IRON2));
+        world.add(st);
       }
     }
     // the funnels: big glass coin funnels, the same shape the balls roll round (see course3d.js's bowlY),
@@ -735,6 +809,25 @@ export function create(g) {
       });
       D.ferris.push({ Wf, rotor, cars });
     }
+    // Skee-ball boards (the same shape the balls roll on: see course3d.js's stepSkee): the rings painted on a
+    // board sloping up away from the lane, with their raised lips and the holes at the bottom of each, the
+    // 100 pockets in its top corners, walls round it, a gutter along the bottom, a see-through backstop, and
+    // a row of bulbs along the top
+    for (const Sk of K.skee) {
+      const { half, lips, lipH } = Sk.cfg, g0 = new THREE.Group(), w2 = 2 * half;
+      g0.position.fromArray(Sk.C);
+      g0.quaternion.setFromRotationMatrix(_m.makeBasis(_vx.fromArray(Sk.e1), _vy.fromArray(Sk.n), _vz.fromArray(Sk.A)));
+      g0.add(mesh(new THREE.PlaneGeometry(w2, w2).rotateX(-Math.PI / 2), skeeFace(Sk.cfg)));
+      g0.add(mesh(new THREE.BoxGeometry(w2, 3, w2).translate(0, -1.55, 0), lam('#2a1a14')));
+      const lipGeo = L => new THREE.LatheGeometry([[L.R - 0.3, 0], [L.R + 0.3, 0], [L.R + 0.3, lipH], [L.R - 0.3, lipH], [L.R - 0.3, 0]].map(([r, y]) => new THREE.Vector2(r, y)), Math.max(24, Math.round(L.R * 6))).translate(L.x, 0, L.y);
+      g0.add(mesh(mergeGeometries(lips.map(lipGeo)), shiny('#f0dca8')));
+      for (const sd of [-1, 1]) g0.add(mesh(new THREE.BoxGeometry(w2 + 4, 7, 1.4).translate(0, 2.5, sd * (half + 0.7)), lam('#c8343e')));
+      g0.add(mesh(new THREE.BoxGeometry(1.4, 7, w2).translate(half + 0.7, 2.5, 0), lam('#c8343e')));
+      g0.add(mesh(new THREE.BoxGeometry(4, 1, w2).translate(-half - 2, -2, 0), lam('#16121e')));   // (the gutter)
+      const net = mesh(new THREE.BoxGeometry(0.4, 22, w2 + 2).translate(half + 1.2, 13, 0), GLASS, false); net.renderOrder = 2; g0.add(net);
+      for (let k = 0; k < 2; k++) g0.add(mesh(mergeGeometries(Array.from({ length: 11 }, (_, i) => new THREE.SphereGeometry(0.6, 6, 4).translate(half + 0.7, 6.4, -half + (2 * i + k) * w2 / 22 + w2 / 44))), glowing(k ? '#ffe9a0' : '#ff3bd0'), false));
+      world.add(g0);
+    }
     // the finish arch
     {
       const p = K.goalPiece, arch = onTrack(new THREE.Group(), p, K.finishS, 0, 0);
@@ -828,6 +921,9 @@ export function create(g) {
     return [face, face, DOM_EDGE, DOM_EDGE, DOM_EDGE, DOM_EDGE];
   });
   const domMat = () => domTiles[Math.floor(Math.random() * domTiles.length)];
+  // a bowling pin: white, with two red stripes round its neck
+  const pinGeo3 = new THREE.LatheGeometry([[0.01, 0], [1, 0], [1.35, 0.8], [1.7, 2.2], [1.62, 3.4], [1.15, 4.6], [0.72, 5.4], [0.75, 6.2], [0.95, 6.9], [0.8, 7.4], [0.4, 7.75], [0.01, 7.85]].map(([r, y]) => new THREE.Vector2(r, y)), 16), PIN_WHITE = shiny('#fbf8f0');
+  const pinStripes = mergeGeometries([5.25, 5.75].map(y => new THREE.CylinderGeometry(0.76, 0.76, 0.28, 16, 1, true).translate(0, y, 0)));
   const coneGeo = new THREE.ConeGeometry(2.4, 6, 12).translate(0, 3.6, 0), coneMat = new THREE.MeshLambertMaterial({ map: rowsTex([['#ff7a1a'], ['#ff7a1a'], ['#fffaf0'], ['#ff7a1a'], ['#fffaf0'], ['#ff7a1a']]) });
   // Mahjong tiles: ivory fronts, facing up the track at the balls coming, on green backs. Faces 0-8 are the
   // dots, 9-17 the bamboo, 18-26 the characters, then the four winds and the three dragons.
@@ -928,18 +1024,65 @@ export function create(g) {
     const f = [1, 2, 3, 4, 5, 6].map(face);
     return [f[2], f[3], f[1], f[4], f[0], f[5]];   // (as dieMats: +x 3, -x 4, +y 2, -y 5, +z 1, -z 6)
   })();
+  // The fairground's colors, and its stands (each standing on its platform, its front, +z, toward the track)
+  const FAIR_BULBS = ['#ffe9a0', '#ff3bd0', '#3ff8ff', '#ffe600', '#ff8a3a'], FAIR_FLAGS = ['#ff3b5c', '#ffe600', '#3ff8ff', '#3fdc7a', '#ff3bd0', '#fffaf0'];
+  const stripes = (a, b, n) => new THREE.MeshLambertMaterial({ map: (() => { const t = rowsTex([[a, a, b, b]]); t.repeat.set(n, 1); return t; })() });
+  const TENT_WALL = stripes('#1f5cc8', '#fffaf0', 10), AWNING = stripes('#ff3b5c', '#fffaf0', 6);
+  const CART = new THREE.MeshLambertMaterial({ map: rowsTex([['#d42030', '#fffaf0']]) });
+  const TICKETS = new THREE.MeshBasicMaterial({ map: canvasTex(48, 12, (x) => { x.fillStyle = '#16121e'; x.fillRect(0, 0, 48, 12); const t = g.textArt('TICKETS', '#ffe600'); x.drawImage(t, (48 - t.width) >> 1, (12 - t.height) >> 1); }) });
+  function fairStand(kind) {
+    const g0 = new THREE.Group(), bulbs = (r, y, n) => g0.add(mesh(mergeGeometries(Array.from({ length: n }, (_, i) => new THREE.SphereGeometry(0.4, 6, 4).translate(r * Math.cos(i / n * TAU), y, r * Math.sin(i / n * TAU)))), glowing('#ffe9a0'), false));
+    if (kind === 'tent') {
+      // a striped tent with a pointed top, a pennant, a dark doorway and a ring of bulbs
+      g0.add(mesh(new THREE.CylinderGeometry(8, 8, 7, 24, 1, true).translate(0, 3.5, 0), TENT_WALL), mesh(new THREE.ConeGeometry(9.5, 8, 24, 1, true).translate(0, 11, 0), CANOPY));
+      g0.add(mesh(new THREE.BoxGeometry(4, 5.5, 0.6).translate(0, 2.75, 7.9), lam('#16121e')), mesh(new THREE.CylinderGeometry(0.25, 0.25, 4, 6).translate(0, 17, 0), BRASS));
+      g0.add(mesh(new THREE.BoxGeometry(2.6, 1.2, 0.15).translate(1.3, 18.3, 0), lam(pick(FAIR_FLAGS))));
+      bulbs(9.6, 7.1, 28);
+    } else if (kind === 'booth') {
+      // a ticket booth: a window and counter, a striped awning, and its sign on top
+      g0.add(mesh(new THREE.BoxGeometry(9, 9, 7).translate(0, 4.5, 0), lam('#c8343e')), mesh(new THREE.BoxGeometry(6, 3.6, 0.4).translate(0, 5.6, 3.55), lam('#16121e')));
+      g0.add(mesh(new THREE.BoxGeometry(7, 0.5, 1.6).translate(0, 3.6, 4.2), lam('#e8b84a')));
+      const aw = mesh(new THREE.BoxGeometry(10, 0.4, 4), AWNING); aw.position.set(0, 8.4, 4.6); aw.rotation.x = 0.4; g0.add(aw);
+      g0.add(mesh(new THREE.BoxGeometry(9, 2.6, 0.6).translate(0, 10.6, 2.5), [lam('#16121e'), lam('#16121e'), lam('#16121e'), lam('#16121e'), TICKETS, lam('#16121e')]));
+    } else {
+      // a popcorn cart: striped, on wheels, its glass case full of popcorn, under an umbrella
+      g0.add(mesh(new THREE.BoxGeometry(7, 4, 4).translate(0, 3, 0), CART));
+      for (const x of [-2.5, 2.5]) for (const z of [-2.15, 2.15]) g0.add(mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.4, 12).rotateX(Math.PI / 2).translate(x, 1.3, z), lam('#16121e')));
+      g0.add(mesh(mergeGeometries(Array.from({ length: 40 }, () => new THREE.SphereGeometry(0.45, 5, 4).translate(rnd(-2.6, 2.6), rnd(5.3, 6.8), rnd(-1.4, 1.4)))), lam('#ffe9a0')));
+      const gl = mesh(new THREE.BoxGeometry(6, 4.5, 3.6).translate(0, 7.25, 0), GLASS, false); gl.renderOrder = 2; g0.add(gl);
+      g0.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 5, 6).translate(0, 12, 0), STEEL), mesh(new THREE.ConeGeometry(5, 2, 12, 1, true).translate(0, 15, 0), AWNING));
+    }
+    return g0;
+  }
+  // A skee-ball lane's maple boards, and a board's face: rings in alternating colors with their scores at the
+  // top of each, the gold cup in the middle, the 100 pockets, and the holes the balls drop through (canvas x
+  // is up the board, canvas y across it; the numbers read from the lane)
+  const SKEE_LANE = new THREE.MeshLambertMaterial({ map: rowsTex([['#e8c088', '#e8c088', '#e8c088', '#d4a870']]) });
+  function skeeFace({ half, rings, pts, pocket, holes, hole }) {
+    const S = 1024 / (2 * half), c = 512;
+    return new THREE.MeshLambertMaterial({ map: canvasTex(1024, 1024, (x) => {
+      x.fillStyle = '#1f5cc8'; x.fillRect(0, 0, 1024, 1024);
+      for (let k = rings.length - 1; k >= 0; k--) { x.fillStyle = k ? k % 2 ? '#fffaf0' : '#c8343e' : '#e8b84a'; x.beginPath(); x.arc(c, c, rings[k] * S, 0, TAU); x.fill(); }
+      for (const sd of [-1, 1]) { x.fillStyle = '#e8b84a'; x.beginPath(); x.arc(c + pocket[0] * S, c + sd * pocket[1] * S, pocket[2] * S, 0, TAU); x.fill(); }
+      x.fillStyle = '#0a0610'; for (const H of holes) { x.beginPath(); x.arc(c + H.x * S, c + H.y * S, (hole + 0.6) * S, 0, TAU); x.fill(); }
+      x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = "700 64px Georgia, serif";
+      const label = (t, px, py, col) => { x.save(); x.translate(c + px * S, c + py * S); x.rotate(Math.PI / 2); x.fillStyle = col; x.fillText(t, 0, 0); x.restore(); };
+      for (let k = 1; k < rings.length; k++) label(String(pts[k]), (rings[k - 1] + rings[k]) / 2, 0, k % 2 ? '#c8343e' : '#fffaf0');
+      for (const sd of [-1, 1]) label('100', pocket[0] - pocket[2] - 3.4, sd * pocket[1], '#ffd84a');
+    }, true) });
+  }
   // a wooden coaster's white timbers, its lift chain, and the Ferris wheel's gate bar
   const COASTER_WHITE = lam('#f4f0e8');
   const chainTex = canvasTex(8, 4, (x) => { x.fillStyle = '#16121e'; x.fillRect(0, 0, 8, 4); x.fillStyle = '#a8a8bc'; x.fillRect(0, 1, 3, 2); x.fillRect(4, 0, 3, 1); x.fillRect(4, 3, 3, 1); x.fillStyle = '#6a6488'; x.fillRect(3, 1, 1, 2); x.fillRect(7, 1, 1, 2); });
   const CHAIN = new THREE.MeshLambertMaterial({ map: chainTex });
   const GATE_BAR = new THREE.MeshLambertMaterial({ map: rowsTex([['#ff3b5c', '#ff3b5c', '#fffaf0', '#fffaf0']]) });
-  // A merry-go-round: its turning deck in slices of cream and red, a mirrored column in the middle, the horses
-  // on brass poles (where the poles are: see course3d.js's horses), bobbing up and down, and a striped canopy
-  // with a scalloped valance ringed with bulbs, all turning together.
-  const carDeckTex = canvasTex(128, 128, (x) => {
-    for (let k = 0; k < 16; k++) { x.fillStyle = k % 2 ? '#c8343e' : '#f4e8d0'; x.beginPath(); x.moveTo(64, 64); x.arc(64, 64, 64, k / 16 * TAU, (k + 1) / 16 * TAU); x.fill(); }
-    x.strokeStyle = '#e8b84a'; x.lineWidth = 3; for (const r of [62, 40]) { x.beginPath(); x.arc(64, 64, r, 0, TAU); x.stroke(); }
-  }, true);
+  // A merry-go-round: rings of turning deck, each in slices of its own colors with a brass rim and its own
+  // ring of horses on brass poles (where the poles are: see course3d.js's horses), bobbing up and down, with
+  // a gilded crown over them; a mirrored column in the middle, and over it all a striped canopy with a
+  // scalloped valance ringed with bulbs, turning with the middle ring.
+  const carDeckTex = [['#c8343e', '#f4e8d0'], ['#1f5cc8', '#f4e8d0'], ['#e8b84a', '#7a1a2a']].map(([a, b]) => canvasTex(256, 256, (x) => {
+    for (let k = 0; k < 48; k++) { x.fillStyle = k % 2 ? a : b; x.beginPath(); x.moveTo(128, 128); x.arc(128, 128, 128, k / 48 * TAU, (k + 1) / 48 * TAU); x.fill(); }
+  }, true));
   const CANOPY = new THREE.MeshLambertMaterial({ map: (() => { const t = rowsTex([['#c8343e', '#c8343e', '#f4e8d0', '#f4e8d0']]); t.repeat.set(8, 1); return t; })(), side: THREE.DoubleSide });
   const VALANCE = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, map: (() => { const t = canvasTex(16, 8, (x) => {
     x.fillStyle = '#e8b84a'; x.fillRect(0, 0, 16, 3);
@@ -959,26 +1102,32 @@ export function create(g) {
     part(new THREE.BoxGeometry(1.9, 0.4, 2.5), lam(SADDLE_COLS[k % 4]), 0, 1.35);
     return g0;
   }
-  function carouselOn(p, P) {
-    const g0 = onTrack(new THREE.Group(), p, P.s, P.u, 0), rot = new THREE.Group(), H = 19, Rc = P.r + 3, n = P.horses.length;
-    g0.add(rot);
-    rot.add(mesh(new THREE.CylinderGeometry(P.r, P.r, 0.5, 48).translate(0, 0.05, 0), [lam('#7a1a2a'), new THREE.MeshLambertMaterial({ map: carDeckTex }), lam('#7a1a2a')]));
-    rot.add(mesh(new THREE.CylinderGeometry(2.4, 2.4, H, 16).translate(0, H / 2, 0), shiny('#f0dca8', { shininess: 140, specular: 0xffffff })));
-    const hs = [];
-    for (let k = 0; k < n; k++) {
-      const a = k * TAU / n, x = P.hr * Math.cos(a), z = P.hr * Math.sin(a);
-      rot.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, H, 10).translate(x, H / 2, z), BRASS), mesh(new THREE.CylinderGeometry(1.2, 1.2, 1.2, 12).translate(x, 0.6, z), BRASS));
-      const hg = horse(k); hg.position.set(x, 10.2, z); hg.rotation.y = -(a + Math.PI / 2) + (P.w < 0 ? Math.PI : 0);   // (facing the way it's going round)
-      rot.add(hg); hs.push(hg);
-    }
-    // the canopy
-    rot.add(mesh(new THREE.CylinderGeometry(Rc, Rc, 0.8, 40).translate(0, H + 0.4, 0), lam('#7a1a2a')));
-    rot.add(mesh(new THREE.ConeGeometry(Rc, 8, 40, 1, true).translate(0, H + 4.8, 0), CANOPY));
-    rot.add(mesh(new THREE.CylinderGeometry(Rc + 0.1, Rc + 0.1, 2.6, 40, 1, true).translate(0, H - 1.1, 0), VALANCE, false));
-    rot.add(mesh(new THREE.SphereGeometry(1.4, 12, 8).translate(0, H + 9.4, 0), BRASS), mesh(new THREE.ConeGeometry(0.5, 3, 8).translate(0, H + 11.6, 0), BRASS));
-    for (let k = 0; k < 2; k++) rot.add(mesh(mergeGeometries(Array.from({ length: 16 }, (_, i) => { const a = (2 * i + k) / 32 * TAU; return new THREE.SphereGeometry(0.5, 6, 4).translate(Rc * Math.cos(a), H + 0.1, Rc * Math.sin(a)); })), glowing(k ? '#fff3c0' : '#ff3bd0'), false));
+  function carouselOn(p, Cr) {
+    const g0 = onTrack(new THREE.Group(), p, Cr.s, Cr.u, 0), H = 24, Rc = Cr.R + 3;
+    const out = Cr.rings.map((P, ri) => {
+      const rot = new THREE.Group(), n = P.horses.length, hs = [];
+      g0.add(rot);
+      rot.add(mesh(new THREE.RingGeometry(Math.max(0.01, P.r0), P.r, 96, 1).rotateX(-Math.PI / 2).translate(0, 0.12, 0), new THREE.MeshLambertMaterial({ map: carDeckTex[ri % 3] })));
+      rot.add(mesh(new THREE.TorusGeometry(P.r - 0.2, 0.3, 4, 96).rotateX(Math.PI / 2).translate(0, 0.12, 0), BRASS));
+      rot.add(mesh(new THREE.TorusGeometry(P.hr, 0.6, 6, 96).rotateX(Math.PI / 2).translate(0, H - 1, 0), BRASS));   // (its crown)
+      for (let k = 0; k < n; k++) {
+        const a = k * TAU / n, x = P.hr * Math.cos(a), z = P.hr * Math.sin(a);
+        rot.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, H - 1, 10).translate(x, (H - 1) / 2, z), BRASS), mesh(new THREE.CylinderGeometry(1.2, 1.2, 1.2, 12).translate(x, 0.6, z), BRASS));
+        const hg = horse(k + ri); hg.position.set(x, 10.2, z); hg.rotation.y = -(a + Math.PI / 2) + (P.w < 0 ? Math.PI : 0);   // (facing the way it's going round)
+        rot.add(hg); hs.push(hg);
+      }
+      return { P, rot, hs };
+    });
+    // the column and the canopy, on the middle ring
+    const top = out[0].rot, nb = Math.round(Rc * 1.2);
+    top.add(mesh(new THREE.CylinderGeometry(3, 3, H, 20).translate(0, H / 2, 0), shiny('#f0dca8', { shininess: 140, specular: 0xffffff })));
+    top.add(mesh(new THREE.CylinderGeometry(Rc, Rc, 0.8, 64).translate(0, H + 0.4, 0), lam('#7a1a2a')));
+    top.add(mesh(new THREE.ConeGeometry(Rc, 12, 64, 1, true).translate(0, H + 6.8, 0), CANOPY));
+    top.add(mesh(new THREE.CylinderGeometry(Rc + 0.1, Rc + 0.1, 2.6, 64, 1, true).translate(0, H - 1.1, 0), VALANCE, false));
+    top.add(mesh(new THREE.SphereGeometry(1.8, 12, 8).translate(0, H + 13.4, 0), BRASS), mesh(new THREE.ConeGeometry(0.6, 4, 8).translate(0, H + 16, 0), BRASS));
+    for (let k = 0; k < 2; k++) top.add(mesh(mergeGeometries(Array.from({ length: nb }, (_, i) => { const a = (2 * i + k) / (2 * nb) * TAU; return new THREE.SphereGeometry(0.55, 6, 4).translate(Rc * Math.cos(a), H + 0.1, Rc * Math.sin(a)); })), glowing(k ? '#fff3c0' : '#ff3bd0'), false));
     world.add(g0);
-    return { P, rot, hs };
+    return out;
   }
   // the 777 on the slot machines' toppers, in the middle of a sign 25 × 9 (the size of the topper's front)
   const sevens = canvasTex(25, 9, (x) => { x.fillStyle = '#ffd84a'; x.fillRect(0, 0, 25, 9); const t = g.textArt('777', '#e8344e'); x.drawImage(t, (25 - t.width) >> 1, (9 - t.height) >> 1); });
@@ -1144,6 +1293,7 @@ export function create(g) {
       });
     }
     for (const { o, m } of D.drums) m.rotation.y -= Math.sign(o.spin) * 1.5 * dt;   // (drawn turning gently)
+    for (const { g0, ph } of D.balloons) { g0.rotation.x = 0.08 * Math.sin(t * 1.3 + ph); g0.rotation.z = 0.08 * Math.cos(t * 1.1 + ph); }   // (swaying in the breeze)
     for (const R of D.rollers) for (const m of R.ms) m.rotation[R.axis] += R.w * dt;
     for (const E of D.escs) {
       const off = (ct * 45) % E.gap;

@@ -61,7 +61,10 @@ There are fairground rides too: merry-go-rounds turning in the track, whose floo
 while the horses' poles bat them about; Ferris wheels, where the track narrows to a gate at the bottom, the
 balls hop into the gondolas going by, ride up and over and are tipped out onto a chute at the top; and
 wooden roller coasters on white trestles, with a chain up the lift hill, a big first drop and camelback
-hills the balls fly off.
+hills the balls fly off. Skee-ball alleys throw each ball up onto a ring board: where it lands scores, and
+the bigger the score the bigger its boost. Racks of bowling pins stand across some of the straights (knock
+all ten down for a STRIKE and a boost), and the plain stretches are dressed like a fairground: strings of
+bulbs and bunting along the rails, balloons, and striped tents, ticket booths and popcorn carts beside it.
 Every curve ends in pop bumpers (one in the middle, one against each rail) that knock the balls it's flung
 outward somewhere new, and deflectors along the rails of the obstacle stretches mean no ball gets past along
 the sides. Finished balls roll on into a tray past the checkered line.

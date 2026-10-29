@@ -148,7 +148,7 @@ export function createCourse(g) {
     return [m * (R - q), m * Math.sign(u) * d / q, m * R * R / (q * q * q)];
   }
   // (how far across a ball can go, on side sd)
-  const ubAt = (p, s, sd = 1) => p.pipe || p.berm === sd ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : p.ub ?? UB;
+  const ubAt = (p, s, sd = 1) => p.pipe || p.berm === sd ? UB + (PIPE.fb + PIPE.R * 0.92 - UB) * pipeM(p, s) : p.rail ? p.rail(s) - RW : p.ub ?? UB;
 
   // A piece along a path given as a function of how far along it is (0..1), its points spaced evenly; up
   // off it is as near straight up as it can be. (The marble run's lanes.)
@@ -232,7 +232,7 @@ export function createCourse(g) {
     return span;
   }
   // a traffic cone at (s, u): where it's knocked to, how far over it is (tilt) toward dir, and its home
-  const cone = (p, s, u) => p.cones.push({ p, s, u, hp: p, hs: s, hu: u, vs: 0, vu: 0, tilt: 0, tv: 0, dir: 0, spin: 0, rest: 0, pop: -9 });
+  const cone = (p, s, u, q = CONE) => { const c = { p, s, u, hp: p, hs: s, hu: u, vs: 0, vu: 0, tilt: 0, tv: 0, dir: 0, spin: 0, rest: 0, pop: -9, q }; p.cones.push(c); return c; };
   // Is the strip along the edge on one side, from a to b, clear of everything else on the piece, so dominoes
   // can fall and cones stand there without being stood in anything?
   function edgeFree(p, a, b, side) {
@@ -333,15 +333,29 @@ export function createCourse(g) {
     }
     p.craps = C;
   }
-  // A merry-go-round: a turntable as wide as the track, carrying the balls round with it, a column in the
-  // middle and the horses' poles going round with it (posts that move, see movers), never nearer the
-  // column or a rail than a ball fits past.
+  // A merry-go-round, the track bulging out round it: a column in the middle and two or three rings of
+  // turntable round it, each turning its own way at its own speed, carrying the balls round with it, with its
+  // ring of horses' poles going round with it (posts that move, see movers). There's always room for a ball
+  // between the column, each ring of poles, and the rail.
+  const CAROUSEL = { col: 3, r0: 10.2, gap: 8.6, pole: 1.2 };
   function carousel(p) {
-    const P = { s: p.len / 2, u: 0, r: RAIL - 0.4, w: pick([-1, 1]) * rnd(1.3, 1.6), th: rnd(0, TAU), carousel: true, hr: fits(1.2), horses: [] };
-    post(p, P.s, 0, 2.4, 'column', { e: 0.4 });
-    for (let k = 0; k < 6; k++) P.horses.push(post(p, P.s, 0, 1.2, 'horse', { e: 0.5, vs: 0, vu: 0 }));
-    p.pads = [P];
-    horses(P);
+    const n = ri(2, 3), s = p.len / 2, rs = Array.from({ length: n }, (_, k) => CAROUSEL.r0 + CAROUSEL.gap * k), R = rs[n - 1] + CAROUSEL.pole + 6.4;
+    const Cr = { s, u: 0, R, rings: [] };
+    let sd = pick([-1, 1]);
+    rs.forEach((hr, k) => {
+      const P = { s, u: 0, r0: k ? (rs[k - 1] + hr) / 2 : 0, r: k < n - 1 ? (hr + rs[k + 1]) / 2 : R, w: sd * rnd(20, 26) / hr, th: rnd(0, TAU), carousel: Cr, hr, horses: [] };
+      for (let j = Math.floor(TAU * hr / 11); j--;) P.horses.push(post(p, s, 0, CAROUSEL.pole, 'horse', { e: 0.5, vs: 0, vu: 0 }));
+      Cr.rings.push(P); horses(P); sd = -sd;
+    });
+    post(p, s, 0, CAROUSEL.col, 'column', { e: 0.4 });
+    p.pads = Cr.rings; p.carousel = Cr;
+    // the rails: a circle round it, easing into the ordinary ones either side
+    const Rb = R + 0.4, k = 4;
+    p.rail = q => { const x = Math.sqrt(Math.max(0, Rb * Rb - (q - s) ** 2)) - RAIL; return RAIL + (x <= -k ? 0 : x >= k ? x : (x + k) ** 2 / (4 * k)); };
+    // (nothing else is built through it, or its canopy)
+    const f = at(p, s, fr());
+    p.extra = [[f.P[0], f.P[1] + 30, f.P[2]]];
+    for (let j = 0; j < 16; j++) { const a = j / 16 * TAU, ds = Math.cos(a) * (Rb + 3), du = Math.sin(a) * (Rb + 3); p.extra.push([f.P[0] + f.T[0] * ds + f.B[0] * du, f.P[1] + f.T[1] * ds, f.P[2] + f.T[2] * ds + f.B[2] * du]); }
   }
   function horses(P) {
     P.horses.forEach((o, k) => {
@@ -436,10 +450,101 @@ export function createCourse(g) {
     p.regions.push({ a: 0, b: L1 + 4, belt: 42, chain: true });
     return p;
   }
+  // A skee-ball board, sloping up away from the lane (tilt): rings of raised lips round a middle cup, and a
+  // 100 pocket, lipped too, in each top corner. On it a ball rolls and bounces about under gravity (see
+  // stepSkee): it bounces off a lip, or hops over one it hits fast enough or comes down on, and down inside a
+  // ring it rolls round to the hole at the bottom of that ring (in the cup and the pockets, the hole's in the
+  // middle) and drops through it into the catcher under the board. Off the rings it rolls down into the gutter
+  // along the bottom. What it drops through scores, and that's its boost. (In the board: x up it, y across.)
+  // A ball's rolled up the lane anywhere between v[0] and v[1] fast.
+  const SKEE = { rings: [3.6, 10, 16.5, 23, 29.5], pts: [50, 40, 30, 20, 10], half: 34, pocket: [27.5, 27.5, 4.2], lipH: 1.8, hole: 2, tilt: 0.3,
+    v: [50, 128], aim: 92, launch: 0.95, boost: { 0: 0, 10: 110, 20: 130, 30: 150, 40: 175, 50: 200, 100: 230 } };
+  SKEE.lips = [...SKEE.rings.map(R => ({ x: 0, y: 0, R })), ...[-1, 1].map(sd => ({ x: SKEE.pocket[0], y: sd * SKEE.pocket[1], R: SKEE.pocket[2] }))];
+  SKEE.holes = [{ x: 0, y: 0, pts: 50 }, ...SKEE.rings.slice(1).map((R, k) => ({ x: -(SKEE.rings[k] + R) / 2, y: 0, pts: SKEE.pts[k + 1] })), ...[-1, 1].map(sd => ({ x: SKEE.pocket[0], y: sd * SKEE.pocket[1], pts: 100 }))];
+  function skeeBoard(lip) {
+    const yaw = tur.yaw, F = [Math.cos(yaw), 0, Math.sin(yaw)], A = [-F[2], 0, F[0]], b = SKEE.tilt, vm = SKEE.aim;
+    // (where a ball thrown at the speed it's aimed for comes back down to just above the lip)
+    let x = 0, y = 0, vh = vm * Math.cos(tur.pitch), vy = vm * Math.sin(tur.pitch);
+    for (let k = 0; k < 2000 && !(vy < 0 && y < 2); k++) { vy -= G / 240; x += vh / 240; y += vy / 240; }
+    const C = [tur.x + F[0] * x, tur.y + y, tur.z + F[2] * x];
+    const Sk = { C, F, A, e1: [F[0] * Math.cos(b), Math.sin(b), F[2] * Math.cos(b)], n: [-F[0] * Math.sin(b), Math.cos(b), -F[2] * Math.sin(b)], lip, cfg: SKEE };
+    lip.skee = Sk;
+    lip.extra = [];
+    for (const a of [-1, 0, 1]) for (const c of [-1, 0, 1]) lip.extra.push([C[0] + (Sk.e1[0] * a + A[0] * c) * 36, C[1] + Sk.e1[1] * a * 36, C[2] + (Sk.e1[2] * a + A[2] * c) * 36]);
+    tur = { x: C[0], y: C[1] - SKEE.half * Math.sin(b) - 40, z: C[2], yaw, pitch: 0 };
+    return Sk;
+  }
+  // Flying at the board: once it's down on it, it's on it (off the top or the sides, it's met by the backstop
+  // and the side walls).
+  function toSkee(w) {
+    const S = w.sk, dx = w.X - S.C[0], dy = w.Y - S.C[1], dz = w.Z - S.C[2], d = dx * S.n[0] + dy * S.n[1] + dz * S.n[2];
+    if (d > RW || w.vy > 0) return false;
+    const h = SKEE.half - RW, dot = v => w.vx * v[0] + w.vy * v[1] + w.vz * v[2];
+    Object.assign(w, { m3: 'skee', bx: clamp(dx * S.e1[0] + dy * S.e1[1] + dz * S.e1[2], -h, h), by: clamp(dx * S.A[0] + dz * S.A[2], -h, h), bh: Math.max(0, d - RW),
+      bvx: dot(S.e1), bvy: dot(S.A), bvh: dot(S.n), skT: t });
+    placeSkee(w);
+    return true;
+  }
+  function placeSkee(w) {
+    const S = w.sk, n = RW + w.bh;
+    w.X = S.C[0] + S.e1[0] * w.bx + S.A[0] * w.by + S.n[0] * n; w.Y = S.C[1] + S.e1[1] * w.bx + S.n[1] * n; w.Z = S.C[2] + S.e1[2] * w.bx + S.A[2] * w.by + S.n[2] * n;
+    w.vx = S.e1[0] * w.bvx + S.A[0] * w.bvy; w.vy = S.e1[1] * w.bvx; w.vz = S.e1[2] * w.bvx + S.A[2] * w.bvy;   // (for the camera)
+    flat(w);
+  }
+  function stepSkee(w, dt) {
+    const S = w.sk, b = SKEE.tilt, on = w.bh < 0.05, h = SKEE.half - RW;
+    w.prog = t; w.dist = S.lip.s0 + S.lip.len;
+    // down the slope (rolling, on it), and down onto it; rolling drag
+    w.bvx -= G * Math.sin(b) * (on ? ROLL : 1) * dt;
+    w.bvh -= G * Math.cos(b) * dt;
+    if (on) { w.bvx *= 1 - 0.25 * dt; w.bvy *= 1 - 0.25 * dt; }
+    w.bx += w.bvx * dt; w.by += w.bvy * dt; w.bh += w.bvh * dt;
+    if (w.bh <= 0) { w.bh = 0; w.bvh = w.bvh < -40 ? -w.bvh * 0.3 : 0; }
+    // the lips: the ball's kept off the top edge of each (a circle lipH up), so it's pushed back, or up and
+    // over if it's going fast enough
+    for (const L of SKEE.lips) {
+      const ex = w.bx - L.x, ey = w.by - L.y, rho = Math.hypot(ex, ey), dr = rho - L.R, dz = RW + w.bh - SKEE.lipH, D = Math.hypot(dr, dz);
+      if (D >= RW || D < 1e-6 || rho < 1e-6) continue;
+      const nr = dr / D, nz = dz / D, cx = ex / rho, cy = ey / rho, push = RW - D;
+      w.bx += cx * nr * push; w.by += cy * nr * push; w.bh += nz * push;
+      const vn = (w.bvx * cx + w.bvy * cy) * nr + w.bvh * nz;
+      if (vn < 0) { const k = 1.35 * vn; w.bvx -= k * nr * cx; w.bvy -= k * nr * cy; w.bvh -= k * nz; }
+      if (Math.abs(dr) < 0.05) w.bvy += rnd(-5, 5);   // (never balanced on top of one)
+    }
+    // (one sat still somewhere it shouldn't be, wedged between two lips, gets a jiggle, as the machine shakes)
+    w.skSlow = on && Math.hypot(w.bvx, w.bvy) < 4 ? (w.skSlow || 0) + dt : 0;
+    if (w.skSlow > 0.8) { w.skSlow = 0; w.bvh = 35; w.bvx += rnd(-12, 4); w.bvy += rnd(-14, 14); }
+    // the side walls and the backstop
+    if (Math.abs(w.by) > h) { w.by = Math.sign(w.by) * h; w.bvy *= -0.4; }
+    if (w.bx > h) { w.bx = h; w.bvx = -Math.abs(w.bvx) * 0.3; }
+    // through a hole, or into the gutter (or, if it's somehow been on the board too long, into the gutter)
+    let drop = null;
+    if (w.bh < 0.3) for (const H of SKEE.holes) if (Math.hypot(w.bx - H.x, w.by - H.y) < SKEE.hole) { drop = H; break; }
+    if (!drop && (w.bx < -h || t - w.skT > 14)) { drop = { pts: 0 }; if (t - w.skT > 14) note('skee'); w.bx = -h; w.by = clamp(w.by, -10, 10); }
+    placeSkee(w);
+    if (!drop) return;
+    const pts = drop.pts;
+    popup(w.X, -w.Y - 8, pts ? String(pts) : 'GUTTER', pts >= 50 ? '#3fdc7a' : pts ? '#ffd84a' : '#e8e6f4', w.Z);
+    if (pts >= 50) emit(w.X, -w.Y, pts === 100 ? 30 : 16, ['#3fdc7a', '#ffd84a', '#fff'], 60, 80, 200, [0.5, 1.1], w.Z);
+    // (out through the back of the board, and down a chute into the middle of the catcher)
+    w.by = clamp(w.by, -12, 12); placeSkee(w);
+    w.X -= S.n[0] * (RW + 2); w.Y -= S.n[1] * (RW + 2); w.Z -= S.n[2] * (RW + 2);
+    Object.assign(w, { m3: 'air', vx: 0, vy: -20, vz: 0, rBoost: SKEE.boost[pts], sk: null, land: S.lip.landOn });
+    flat(w);
+  }
   function dress(p) {
     // deflectors kicking balls off the rails, dominoes and cones along the edges (where there aren't
     // deflectors on that side), lamps beside it
     if (p.kind === 'loop' || p.len < 40) return;
+    // a rack of bowling pins across the middle, on a patch of maple (the deflectors keep clear of it)
+    if (Math.random() < 0.4 && p.len > 70 && !p.berm && !p.catcher) for (let k = 0; k < 4; k++) {
+      const s0 = rnd(16, p.len - 36), a = s0 - 12, b = s0 + 24;
+      if (p.regions.concat(p.blocks || []).some(r => b > (r.a ?? r[0]) && a < (r.b ?? r[1])) || p.obs.some(o => o.s > a - 6 && o.s < b + 6) || p.segs.length) continue;
+      const R = { p, s: s0 + 7.8, pins: [], called: false };
+      for (let row = 0; row < 4; row++) for (let j = 0; j <= row; j++) R.pins.push(cone(p, s0 + row * 5.2, (j - row / 2) * 6.4, PIN));
+      p.regions.push({ a, b, alley: true }); (p.blocks ||= []).push([a - 4, b + 4]); (p.racks ||= []).push(R);
+      break;
+    }
     // (and nothing on top of boost pads or conveyors)
     const used = deflectors(p).concat(p.regions.map(r => [r.a, r.b]), p.blocks || []), clear = (a, b) => !used.some(([u0, u1]) => b > u0 && a < u1);
     const free = (a, b) => !p.regions.concat(p.blocks || []).some(r => b > (r.a ?? r[0]) && a < (r.b ?? r[1]));
@@ -458,7 +563,7 @@ export function createCourse(g) {
   // ---- features: one or more pieces that carry on from the turtle ----
   const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2,
     spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1, tumbler: 0.9,
-    mahjong: 1, craps: 1, carousel: 0.9, ferris: 0.7, coaster: 0.9 };
+    mahjong: 1, craps: 1, carousel: 0.9, ferris: 0.7, coaster: 0.9, skeeball: 0.9 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
@@ -622,15 +727,26 @@ export function createCourse(g) {
       crapsTable(p);
     } else if (kind === 'carousel') {
       // a merry-go-round turning in the track, under its canopy (see carousel)
-      const p = add(straight(rnd(110, 130), -0.05, { kind: 'carousel', style: 'track' }));
+      const p = add(straight(rnd(120, 140), -0.05, { kind: 'carousel', style: 'track' }));
       carousel(p);
-      p.extra = [[p.P[Math.floor(p.n / 2) * 3], p.P[Math.floor(p.n / 2) * 3 + 1] + 30, p.P[Math.floor(p.n / 2) * 3 + 2]]];   // (its canopy)
     } else if (kind === 'ferris') {
       // a Ferris wheel the balls ride up in, and a chute down from the top of it (see ferrisWheel)
       const lead = add(straight(rnd(80, 100), -0.02, { kind: 'station' }));
       ferrisWheel(lead);
       lead.gapTo = out.length;
       dress(add(straight(rnd(50, 70), -0.14, { kind: 'land' })));
+    } else if (kind === 'skeeball') {
+      // a skee-ball alley: up a lane narrowing to a hump, which throws each ball up onto the board (see stepSkee),
+      // and a catcher under the board
+      add(straight(30, -0.04));
+      const lane = add(straight(rnd(60, 75), 0.08, { kind: 'skeeball', style: 'skee' }));
+      for (const sd of [-1, 1]) lane.segs.push({ as: lane.len - 45, au: sd * RAIL, bs: lane.len - 8, bu: sd * 7.5, e: 0.3, wall: true }, { as: lane.len - 8, au: sd * 7.5, bs: lane.len, bu: sd * 7.5, e: 0.3, wall: true });
+      const lip = add(straight(12, SKEE.launch, { kind: 'lip', style: 'skee', ub: 7.5 - RW }));
+      for (const sd of [-1, 1]) lip.segs.push({ as: 0, au: sd * 7.5, bs: lip.len, bu: sd * 7.5, e: 0.3, wall: true });
+      lip.end = 'air';
+      skeeBoard(lip);
+      lip.gapTo = out.length;
+      dress(add(catcher(130)));
     } else if (kind === 'coaster') {
       add(coaster());
       add(straight(30, -0.06));
@@ -804,8 +920,8 @@ export function createCourse(g) {
     K = {
       three: true, stuck: {}, pieces, total, PIPE, moles: pieces.flatMap(p => p.obs.filter(o => o.kind === 'mole')), wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
       drums: pieces.filter(p => p.drum).map(p => p.drum), pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge || p.tilt).map(p => p.bridge || p.tilt),
-      carousels: pieces.flatMap(p => (p.pads || []).filter(P => P.carousel)), ferris: pieces.filter(p => p.ferris).map(p => p.ferris),
-      cones: pieces.flatMap(p => p.cones), craps: pieces.filter(p => p.craps).map(p => p.craps), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
+      carousels: pieces.flatMap(p => (p.pads || []).filter(P => P.carousel)), ferris: pieces.filter(p => p.ferris).map(p => p.ferris), skee: pieces.filter(p => p.skee).map(p => p.skee),
+      cones: pieces.flatMap(p => p.cones), racks: pieces.flatMap(p => p.racks || []), craps: pieces.filter(p => p.craps).map(p => p.craps), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
     };
@@ -958,9 +1074,9 @@ export function createCourse(g) {
       else if (r.roll) { const k = Math.min(1, 7 * dt); if (r.roll.vu) w.vu += (r.roll.vu - w.vu) * k; if (r.roll.vs && w.vs < r.roll.vs) w.vs += (r.roll.vs - w.vs) * k; }
       else if (r.boost && w.vs < r.boost) { w.vs = r.boost; if (!w.boostT) emit(w.X, -w.Y, 8, ['#3ff8ff', '#1a5cff', '#fff'], 40, 30, 100, undefined, w.Z); w.boostT = 0.8; }
     }
-    for (const P of p.pads || []) {   // (on a turntable: carried round with it)
-      const ds = w.s - P.s, du = w.u - P.u;
-      if (ds * ds + du * du < P.r * P.r) { const k = Math.min(1, 3 * dt); w.vs += (-P.w * du - w.vs) * k; w.vu += (P.w * ds - w.vu) * k; }
+    for (const P of p.pads || []) {   // (on a turntable, or one of a merry-go-round's rings: carried round with it)
+      const ds = w.s - P.s, du = w.u - P.u, d2 = ds * ds + du * du;
+      if (d2 < P.r * P.r && d2 >= (P.r0 || 0) ** 2) { const k = Math.min(1, 3 * dt); w.vs += (-P.w * du - w.vs) * k; w.vu += (P.w * ds - w.vu) * k; }
     }
     const sp = Math.hypot(w.vs, w.vu); if (sp > VMAX) { w.vs *= VMAX / sp; w.vu *= VMAX / sp; }
     w.s += w.vs * dt; w.u += w.vu * dt;
@@ -989,7 +1105,10 @@ export function createCourse(g) {
     // off the end
     if (w.s >= p.len) {
       if (p.kind === 'goal' || w.pi === pieces.length - 1) { w.s = p.len - 0.01; w.vs = 0; }
-      else if (p.end === 'air') { at(p, p.len, F1); toAir(w, F1); return; }
+      else if (p.end === 'air') {
+        if (p.skee) { w.vs = rnd(...SKEE.v); w.vu = rnd(-28, 28); w.sk = p.skee; }   // (rolled up a skee-ball lane: as hard as it likes)
+        at(p, p.len, F1); toAir(w, F1); return;
+      }
       else if (p.end === 'funnel') { place3(w); p.fun.wheel ? toWheel(w, p.fun) : toFunnel(w, p.fun); return; }
       else if (p.end === 'ferris') { place3(w); toFerris(w, p); return; }
       else if (p.lanes) {   // (a marble run: into the lane nearest across)
@@ -1048,6 +1167,7 @@ export function createCourse(g) {
   // a ball in the air: falling until it comes down on the piece it's flying to
   function stepAir(w, dt) {
     w.vy -= G * dt; w.X += w.vx * dt; w.Y += w.vy * dt; w.Z += w.vz * dt;
+    if (w.sk && toSkee(w)) return;
     const p = pieces[w.land];
     let best = 1e9, bi = 0;
     for (let i = 0; i < p.n; i += 2) { const d = (p.P[i * 3] - w.X) ** 2 + (p.P[i * 3 + 2] - w.Z) ** 2; if (d < best) { best = d; bi = i; } }
@@ -1059,7 +1179,7 @@ export function createCourse(g) {
     // (over a coaster's crest still too fast to be held to it, it flies on unless it's right into it)
     const flying = p.air && h > -1.5 && s > 0 && s < p.len && (() => { const i = Math.min(p.n - 1, Math.floor(s / p.ds)), vs = w.vx * p.T[i * 3] + w.vy * p.T[i * 3 + 1] + w.vz * p.T[i * 3 + 2]; return vs * vs * p.kN[i] + G * p.N[i * 3 + 1] < 0; })();
     if (h <= 0 && !flying && Math.abs(u) < HW + 8 && s > -14 && s < p.len) {
-      w.m3 = 'track'; w.pi = p.i; w.s = clamp(s, 0, p.len - 0.1); w.u = clamp(u, -UB, UB);
+      w.m3 = 'track'; w.pi = p.i; w.s = clamp(s, 0, p.len - 0.1); w.u = clamp(u, -ubAt(p, w.s, -1), ubAt(p, w.s, 1));
       w.vs = w.vx * p.T[bi * 3] + w.vy * p.T[bi * 3 + 1] + w.vz * p.T[bi * 3 + 2];
       w.vu = w.vx * p.B[bi * 3] + w.vy * p.B[bi * 3 + 1] + w.vz * p.B[bi * 3 + 2];
       const vn = -(w.vx * p.N[bi * 3] + w.vy * p.N[bi * 3 + 1] + w.vz * p.N[bi * 3 + 2]);
@@ -1296,13 +1416,21 @@ export function createCourse(g) {
     D.still = down && !moving ? D.still + dt : 0;
     if (D.still > 4) { D.raise = true; D.still = 0; }
   }
-  // A cone slides about with friction (more standing on its base than lying on its side), down the slope
-  // it's on, and bumps into the posts, walls, rails and other cones; hit hard enough it goes over, and lying
-  // down it spins. Its middle: the base's, or out along it toward its tip as it goes over.
-  const CONE = { r: 2.5, tc: 0.45, lie: 1.2 };
-  const coneOff = c => { const k = 2.5 * Math.sin(c.tilt) / Math.sin(CONE.lie); return [Math.cos(c.dir) * k, Math.sin(c.dir) * k]; };
+  // A cone (or a bowling pin) slides about with friction (more standing on its base than lying on its
+  // side), down the slope it's on, and bumps into the posts, walls, rails and other cones and pins; hit hard
+  // enough it goes over, and lying down it spins. Its middle: the base's, or out along it toward its tip as
+  // it goes over. Its shape, q: how far it reaches (r), how far over it'll tip back up from (tc), how far over
+  // it lies (lie), how far its middle is from its base then (off), and how hard it falls (g). A pin's narrow
+  // and top-heavy: it goes over at a touch, and lies flat.
+  const CONE = { r: 2.5, tc: 0.45, lie: 1.2, off: 2.5, g: 30 }, PIN = { r: 1.7, tc: 0.14, lie: 1.45, off: 3.4, g: 26, pin: true };
+  const coneOff = c => { const k = c.q.off * Math.sin(c.tilt) / Math.sin(c.q.lie); return [Math.cos(c.dir) * k, Math.sin(c.dir) * k]; };
+  // (sent over toward (ns, nu), as hard as rel, if it's standing; spun if it's lying down)
+  function tipOver(c, ns, nu, rel) {
+    if (c.tilt < c.q.lie) { if (!c.tilt) c.dir = Math.atan2(nu, ns); c.tv += rel * 0.06; }
+    else c.spin += rnd(-1, 1) * rel * 0.05;
+  }
   function knockCone(c, w) {
-    const [os, ou] = coneOff(c), ds = c.s + os - w.s, du = c.u + ou - w.u, d = Math.hypot(ds, du), R = RW + CONE.r;
+    const [os, ou] = coneOff(c), ds = c.s + os - w.s, du = c.u + ou - w.u, d = Math.hypot(ds, du), R = RW + c.q.r;
     if (d >= R || d < 1e-6) return;
     const ns = ds / d, nu = du / d, rel = (w.vs - c.vs) * ns + (w.vu - c.vu) * nu;
     c.s += ns * (R - d); c.u += nu * (R - d);   // (it's shoved aside, not into anything: the ball goes on through)
@@ -1310,12 +1438,11 @@ export function createCourse(g) {
     if (rel <= 0) return;
     c.vs += ns * rel * 1.5; c.vu += nu * rel * 1.5; c.rest = 0;
     w.vs -= ns * rel * 0.12; w.vu -= nu * rel * 0.12;
-    if (c.tilt < CONE.lie) { if (!c.tilt) c.dir = Math.atan2(nu, ns); c.tv += rel * 0.06; }
-    else c.spin += rnd(-1, 1) * rel * 0.05;
+    tipOver(c, ns, nu, rel);
   }
   // (pushed out of a circle at (s, u), r further than its own, which might be moving)
   function coneOut(c, cs, cu, s, u, r, vs = 0, vu = 0) {
-    const ds = cs - s, du = cu - u, d = Math.hypot(ds, du), R = r + CONE.r;
+    const ds = cs - s, du = cu - u, d = Math.hypot(ds, du), R = r + c.q.r;
     if (d >= R || d < 1e-6) return false;
     const ns = ds / d, nu = du / d, vn = (c.vs - vs) * ns + (c.vu - vu) * nu;
     c.s += ns * (R - d); c.u += nu * (R - d);
@@ -1336,23 +1463,23 @@ export function createCourse(g) {
   function settleCone(c, knock) {
     const p = c.p, [os, ou] = coneOff(c), at2 = () => [c.s + os, c.u + ou];
     for (let pass = 0; pass < 3; pass++) {
-      for (const o of p.obs) if (!(o.kind === 'mole' && o.up < 0.4) && Math.abs(o.s - c.s - os) < o.r + CONE.r) coneOut(c, ...at2(), o.s, o.u, o.r, o.vs, o.vu);
+      for (const o of p.obs) if (!(o.kind === 'mole' && o.up < 0.4) && Math.abs(o.s - c.s - os) < o.r + c.q.r) coneOut(c, ...at2(), o.s, o.u, o.r, o.vs, o.vu);
       for (const sg of p.segs) if (sg.on !== false) coneSeg(c, ...at2(), sg);
       for (const F of p.flips || []) coneSeg(c, ...at2(), F.seg);
-      for (const D of p.doms) if (Math.abs(D.u - c.u - ou) < 2 + CONE.r) for (let i = 0; i < D.ds.length; i++) if (Math.abs(D.th[i]) < 1.2 && coneOut(c, ...at2(), D.ds[i] + DOM.d / 2, D.u, 2) && knock && !pass) pushDominoes(D, c.s + os, c.vs, CONE.r);
-      const lim = (p.berm && Math.sign(c.u + ou) === p.berm ? PIPE.fb + 1 : RAIL) - CONE.r;   // (a berm's wall, or the rail)
+      for (const D of p.doms) if (Math.abs(D.u - c.u - ou) < 2 + c.q.r) for (let i = 0; i < D.ds.length; i++) if (Math.abs(D.th[i]) < 1.2 && coneOut(c, ...at2(), D.ds[i] + DOM.d / 2, D.u, 2) && knock && !pass) pushDominoes(D, c.s + os, c.vs, c.q.r);
+      const lim = (p.berm && Math.sign(c.u + ou) === p.berm ? PIPE.fb + 1 : p.rail ? p.rail(c.s + os) : RAIL) - c.q.r;   // (a berm's wall, or the rail)
       if (Math.abs(c.u + ou) > lim) { c.u = Math.sign(c.u + ou) * lim - ou; if (c.vu * c.u > 0) c.vu *= -0.4; }
-      if (c.s + os < CONE.r && !coneOn(p, -1)) { c.s = CONE.r - os; c.vs = Math.abs(c.vs) * 0.4; } else if (c.s + os > p.len - CONE.r && !coneOn(p, 1)) { c.s = p.len - CONE.r - os; c.vs = -Math.abs(c.vs) * 0.4; }
+      if (c.s + os < c.q.r && !coneOn(p, -1)) { c.s = c.q.r - os; c.vs = Math.abs(c.vs) * 0.4; } else if (c.s + os > p.len - c.q.r && !coneOn(p, 1)) { c.s = p.len - c.q.r - os; c.vs = -Math.abs(c.vs) * 0.4; }
     }
   }
   function stepCone(c, dt) {
     const p = c.p, home = p === c.hp && c.s === c.hs && c.u === c.hu;
     if (home && !c.vs && !c.vu && !c.tilt && !c.tv) return;   // (standing where it was put)
-    const f = at(p, c.s, F1), lying = c.tilt >= CONE.lie;
+    const f = at(p, c.s, F1), lying = c.tilt >= c.q.lie;
     if (!lying && (c.tilt > 0 || c.tv)) {   // (going over, or wobbling back up)
-      c.tv += 30 * Math.sin(c.tilt - CONE.tc) * dt; c.tilt += c.tv * dt;
+      c.tv += c.q.g * Math.sin(c.tilt - c.q.tc) * dt; c.tilt += c.tv * dt;
       if (c.tilt <= 0) { c.tilt = 0; c.tv = 0; }
-      if (c.tilt >= CONE.lie) { c.tilt = CONE.lie; c.tv = 0; }
+      if (c.tilt >= c.q.lie) { c.tilt = c.q.lie; c.tv = 0; }
     }
     if (lying && c.spin) {   // (spinning round its middle)
       const [a0, b0] = coneOff(c); c.dir += c.spin * dt; const [a1, b1] = coneOff(c);
@@ -1362,12 +1489,15 @@ export function createCourse(g) {
     const v = Math.hypot(c.vs, c.vu), dv = (lying ? 0.45 : 0.6) * G * dt;
     if (v <= dv) c.vs = c.vu = 0; else { c.vs -= c.vs / v * dv; c.vu -= c.vu / v * dv; }
     c.s += c.vs * dt; c.u += c.vu * dt;
-    for (const o of p.cones) if (o !== c) {   // (other cones)
-      const [s1, u1] = coneOff(c), [s2, u2] = coneOff(o), ds = c.s + s1 - o.s - s2, du = c.u + u1 - o.u - u2, d = Math.hypot(ds, du);
-      if (d >= 2 * CONE.r || d < 1e-6) continue;
-      const ns = ds / d, nu = du / d, push = (2 * CONE.r - d) / 2, vn = (c.vs - o.vs) * ns + (c.vu - o.vu) * nu;
+    for (const o of p.cones) if (o !== c) {   // (other cones and pins: knocked about, and over, by each other)
+      const [s1, u1] = coneOff(c), [s2, u2] = coneOff(o), ds = c.s + s1 - o.s - s2, du = c.u + u1 - o.u - u2, d = Math.hypot(ds, du), R = c.q.r + o.q.r;
+      if (d >= R || d < 1e-6) continue;
+      const ns = ds / d, nu = du / d, push = (R - d) / 2, vn = (c.vs - o.vs) * ns + (c.vu - o.vu) * nu;
       c.s += ns * push; c.u += nu * push; o.s -= ns * push; o.u -= nu * push;
-      if (vn < 0) { const im = -0.75 * vn; c.vs += ns * im; c.vu += nu * im; o.vs -= ns * im; o.vu -= nu * im; o.rest = 0; }
+      if (vn < 0) {
+        const im = -0.75 * vn; c.vs += ns * im; c.vu += nu * im; o.vs -= ns * im; o.vu -= nu * im; o.rest = 0;
+        if (im > 6) { tipOver(o, -ns, -nu, im); tipOver(c, ns, nu, im); }
+      }
       settleCone(o, false);
     }
     settleCone(c, true);
@@ -1375,13 +1505,24 @@ export function createCourse(g) {
     if (c.s < 0 || c.s > p.len) { const fwd = c.s > 0, q = coneOn(p, fwd ? 1 : -1); if (q) moveCone(c, q, fwd ? c.s - p.len : c.s + q.len); }
     // a while after it's come to rest somewhere else, it's put back
     c.rest = !c.vs && !c.vu && !c.tv && !c.spin ? c.rest + dt : 0;
-    if (c.rest > 5 && !c.hp.cones.some(o => o !== c && Math.hypot(o.s - c.hs, o.u - c.hu) < 2 * CONE.r + 0.5)) { moveCone(c, c.hp, c.hs); Object.assign(c, { u: c.hu, vs: 0, vu: 0, tilt: 0, tv: 0, spin: 0, rest: 0, pop: t }); }
+    if (c.rest > 5 && !c.hp.cones.some(o => o !== c && Math.hypot(o.s - c.hs, o.u - c.hu) < c.q.r + o.q.r + 0.5)) { moveCone(c, c.hp, c.hs); Object.assign(c, { u: c.hu, vs: 0, vu: 0, tilt: 0, tv: 0, spin: 0, rest: 0, pop: t }); }
   }
   // The piece after p (dir 1) or before it (-1), if the track carries straight on onto it and a cone can
   // slide about on it.
   function coneOn(p, dir) {
     const q = pieces[p.i + dir], [a, b] = dir > 0 ? [p, q] : [q, p];
     return q && !a.end && !a.lanes && !a.lane && !b.lane && !q.drum && !q.pipe && !q.tilt && !q.bridge && !q.saw && !q.craps && q.kind !== 'loop' && q.kind !== 'start' ? q : null;
+  }
+  // A rack of pins all knocked down: STRIKE, and a boost for the balls that did it. It's called again once
+  // they've all been put back up.
+  function strike(R, ws) {
+    if (R.called) { if (R.pins.every(c => !c.tilt && c.p === c.hp)) R.called = false; return; }
+    if (!R.pins.every(c => c.tilt > c.q.lie * 0.8)) return;
+    R.called = true;
+    const f = at(R.p, R.s, fr()), x = f.P[0] + f.N[0] * 14, y = f.P[1] + f.N[1] * 14, z = f.P[2] + f.N[2] * 14;
+    popup(x, -y, 'STRIKE!', '#ffd84a', z);
+    emit(x, -y, 30, ['#ffd84a', '#ff3b5c', '#3ff8ff', '#fff'], 70, 90, 200, [0.6, 1.2], z);
+    for (const w of ws) if (w.m3 === 'track' && w.pi === R.p.i && Math.abs(w.s - R.s) < 30 && !w.rank) { w.vs = Math.max(w.vs, 170); w.boostT = 1; }
   }
   function moveCone(c, q, s) {
     if (c.p !== q) { c.p.cones.splice(c.p.cones.indexOf(c), 1); q.cones.push(c); c.p = q; }
@@ -1567,12 +1708,14 @@ export function createCourse(g) {
     for (const C of K.craps) stepCraps(C, dt, ws);
     for (const D of K.doms) stepDominoes(D, dt);
     for (const c of K.cones) stepCone(c, dt);
+    for (const R of K.racks) strike(R, ws);
     for (const w of ws) {
       if (w.m3 === 'track') stepTrack(w, dt, racing);
       else if (w.m3 === 'air') stepAir(w, dt);
       else if (w.m3 === 'funnel') stepFunnel(w, dt);
       else if (w.m3 === 'wheel') stepWheel(w, dt);
       else if (w.m3 === 'ferris') stepFerris(w, dt);
+      else if (w.m3 === 'skee') stepSkee(w, dt);
     }
     pairs(ws);
     for (const w of ws) if (w.m3 === 'wheel') { frets(w, w.F); w.X = w.F.cx + Math.cos(w.fth) * w.frad; w.Z = w.F.cz + Math.sin(w.fth) * w.frad; w.Y = w.wy + RW; flat(w); }   // (not pushed into one by another ball)
