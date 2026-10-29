@@ -7,11 +7,12 @@
 // conveyor feeds the lip, so everyone flies the same way), glass funnels the balls spiral down through onto
 // the track below, roulette wheels they spin round and settle into a pocket of, halfpipes they swing from
 // wall to wall down, whack-a-mole fields of moles popping up, spinning turnstiles, paddle wheels, hammers
-// swinging across, see-saws, escalators, beds of spinning rollers, pistons punching out of the rails, flipper
+// swinging across, see-saws (giant playing cards), escalators, beds of spinning rollers, pistons punching out of the rails, flipper
 // gauntlets, marble runs where the track splits into narrow lanes (walled, or wire) that corkscrew round
 // and cross over and under each other or twist round each other like a rope, tornado spirals, spinning
 // turntables set into the track, swaying rope bridges, lottery drums the balls tumble through, turns with
-// berms, patches of cobbles, gravel and rumble strips, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
+// berms, patches of cobbles, gravel and rumble strips, tilting mahjong tables with rows of tiles to find a way
+// through, craps tables with two giant dice tumbling about on them, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
 // of dice, chips and bumpers to weave between, and lane splits with something different down each side,
 // then a finish arch. It turns back toward the middle before it wanders too far, and a piece that would run
 // into track already there is built some other way.
@@ -20,7 +21,8 @@
 // banking and the turns move it along and across, and the posts, bumpers, flippers and walls are all in that
 // plane. Off a jump or out of a funnel it flies freely until it lands on the next piece. Balls bump into
 // each other in the world. As in 2D, they always roll on at a little speed of their own, and one that's
-// stuck gets a nudge, or a lift along the track.
+// stuck gets a nudge, or a lift along the track. The cones and dominoes along the edges are knocked about
+// by the balls (which go on through them) and bump into everything else on the track, and each other.
 const TAU = Math.PI * 2;
 
 export function createCourse(g) {
@@ -213,10 +215,25 @@ export function createCourse(g) {
       } else for (const u of [-6.5, 6.5]) post(p, s, u + rnd(-0.3, 0.3), 1.5, 'pin', { e: 0.45 });
     }
   }
+  // A row of dominoes standing along the edge on one side (each how far over it is, th, toward +s, and how
+  // fast it's going over, w), with room past each end for the end ones to fall flat. Returns where it went.
   function dominoes(p, a, side) {
-    const nn = ri(7, 12), ds = Array.from({ length: nn }, (_, i) => a + i * 4);
-    if (ds[nn - 1] > p.len - 4) return;
-    p.doms.push({ ds, f: 1, start: -1, side, p });
+    const nn = ri(7, 12), ds = Array.from({ length: nn }, (_, i) => a + i * 4), span = [a - 10, ds[nn - 1] + 11];
+    if (span[0] < 2 || span[1] > p.len - 2 || !edgeFree(p, ...span, side)) return null;
+    p.doms.push({ ds, side, p, u: side * EDGE, th: new Float64Array(nn), w: new Float64Array(nn), still: 0, raise: false });
+    return span;
+  }
+  // a traffic cone at (s, u): where it's knocked to, how far over it is (tilt) toward dir, and its home
+  const cone = (p, s, u) => p.cones.push({ p, s, u, hp: p, hs: s, hu: u, vs: 0, vu: 0, tilt: 0, tv: 0, dir: 0, spin: 0, rest: 0, pop: -9 });
+  // Is the strip along the edge on one side, from a to b, clear of everything else on the piece, so dominoes
+  // can fall and cones stand there without being stood in anything?
+  function edgeFree(p, a, b, side) {
+    if (p.berm === side) return false;
+    const u0 = side * EDGE, near = (s, u, r) => s > a - r && s < b + r && Math.abs(u - u0) < r + 3.5;
+    const nearSeg = sg => { for (let k = 0; k <= 12; k++) if (near(sg.as + (sg.bs - sg.as) * k / 12, sg.au + (sg.bu - sg.au) * k / 12, 1)) return true; return false; };
+    if (p.obs.some(o => near(o.s, o.u, o.r)) || p.segs.some(nearSeg) || (p.flips || []).some(F => near(F.ps, F.pu, F.len)) || (p.pads || []).some(P => near(P.s, P.u, P.r))) return false;
+    if ((p.movs || []).some(M => M.type === 'spin' ? near(M.cs, M.cu, M.L) : M.type === 'slide' ? M.o.s > a - 6 && M.o.s < b + 6 : (M.s ?? M.cs) > a - 12 && (M.s ?? M.cs) < b + 12)) return false;
+    return !p.doms.some(D => D.side === side && D.ds[0] - 10 < b && D.ds.at(-1) + 11 > a) && !p.cones.some(c => Math.sign(c.hu) === side && c.hs > a - 4 && c.hs < b + 4);
   }
   // Rubber deflectors standing out from a rail at an angle: a ball rolling along the edge hits one and is
   // kicked back across the track, often into a bumper, die or chip stack standing just past it. On a turn
@@ -263,29 +280,74 @@ export function createCourse(g) {
       if ((p.movs || []).some(M => M.type === 'spin' ? near(M.cs, M.cu, M.L) : M.type === 'slide' ? near(M.o.s, M.u0 - M.A, M.o.r) || near(M.o.s, M.u0 + M.A, M.o.r) : M.type === 'piston' ? Math.abs(M.s - s - 5) < 22 : M.type === 'paddle' ? Math.abs(M.cs - s - 5) < 16 : false)) continue;
       if ((p.flips || []).some(F => near(F.ps, F.pu, F.len))) continue;
       if (p.segs.some(sg => !sg.deflector && sg.on !== false && Math.min(dist(sg.as, sg.au, s0, u0, s1, u1), dist(sg.bs, sg.bu, s0, u0, s1, u1), dist(s0, u0, sg.as, sg.au, sg.bs, sg.bu), dist(s1, u1, sg.as, sg.au, sg.bs, sg.bu)) < gap)) continue;
-      if ((p.pads || []).some(P => near(P.s, P.u, P.r)) || p.doms.some(D => D.side === side && D.ds.some(x => x > s - 4 && x < s + 15)) || p.cones.some(c => Math.sign(c.u) === side && c.s > s - 4 && c.s < s + 15)) continue;
+      if ((p.pads || []).some(P => near(P.s, P.u, P.r)) || p.doms.some(D => D.side === side && D.ds.some(x => x > s - 4 && x < s + 15)) || p.cones.some(c => Math.sign(c.hu) === side && c.hs > s - 4 && c.hs < s + 15)) continue;
       deflector(p, s, side);
     }
   }
+  // The rows of tiles on a mahjong table: five slots across, a tile standing in each but where there's a gap
+  // two slots wide (wide enough that a ball rolling along the row drops into it, and several go through at
+  // once), at a rail, in the middle, or one at each rail, never where the last row's was. Each run of tiles
+  // side by side is walled round.
+  const MJ = { w: 6.2, d: 4.2, h: 8.2, n: 5 };
+  function mahjongRows(p) {
+    const slot = 2 * RAIL / MJ.n, gaps = [[0, 1], [MJ.n - 2, MJ.n - 1], [1, 2], [2, 3], [0, MJ.n - 1]];
+    let prev = [];
+    p.rows = [];
+    for (let s = 28; s < p.len - 22; s += rnd(28, 34)) {
+      const gap = pick(gaps.filter(gp => !gp.some(k => prev.includes(k))));
+      prev = gap;
+      const tiles = [];
+      for (let k = 0; k < MJ.n; k++) if (!gap.includes(k)) tiles.push({ u: -RAIL + (k + 0.5) * slot, face: ri(0, 33) });
+      p.rows.push({ s, tiles });
+      const a = s - MJ.d / 2, b = s + MJ.d / 2;
+      for (let k = 0; k < MJ.n;) {
+        if (gap.includes(k)) { k++; continue; }
+        let e = k; while (e + 1 < MJ.n && !gap.includes(e + 1)) e++;
+        const u0 = k === 0 ? -RAIL : -RAIL + k * slot + (slot - MJ.w) / 2, u1 = e === MJ.n - 1 ? RAIL : -RAIL + (e + 1) * slot - (slot - MJ.w) / 2;
+        p.segs.push({ as: a, au: u0, bs: a, bu: u1, e: 0.3, tile: true }, { as: b, au: u0, bs: b, bu: u1, e: 0.3, tile: true });
+        if (k > 0) p.segs.push({ as: a, au: u0, bs: b, bu: u0, e: 0.3, tile: true });
+        if (e < MJ.n - 1) p.segs.push({ as: a, au: u1, bs: b, bu: u1, e: 0.3, tile: true });
+        k = e + 1;
+      }
+    }
+  }
+  // A craps table's two giant dice. Each sits in a square as big as it is, on a grid two across (so there's
+  // always room to get by along either rail) and as many along as fit. A die is walled round its footprint
+  // (see dieBox) and kept turned as a matrix from its own axes to (along, up, across), so the face on top is
+  // known.
+  function crapsTable(p) {
+    const C = { p, a: 9, s0: 26, next: -1, thrown: false, dice: [] };
+    C.n = Math.floor((p.len - 20 - C.s0) / C.a);
+    for (const [ci, cj] of [[1, 0], [3, 1]]) {
+      const Dc = { ci, cj, R: [1, 0, 0, 0, 1, 0, 0, 0, 1], roll: null, left: 0, segs: [0, 1, 2, 3].map(() => ({ as: 0, au: 0, bs: 0, bu: 0, e: 0.4, die: true })) };
+      for (let k = ri(3, 7); k--;) Dc.R = mul3(turn90(pick([[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]])), Dc.R);   // (any way up to start with)
+      p.segs.push(...Dc.segs); C.dice.push(Dc); dieBox(C, Dc);
+    }
+    p.craps = C;
+  }
   function dress(p) {
     // deflectors kicking balls off the rails, dominoes and cones along the edges (where there aren't
-    // deflectors), lamps beside it
+    // deflectors on that side), lamps beside it
     if (p.kind === 'loop' || p.len < 40) return;
     // (and nothing on top of boost pads or conveyors)
     const used = deflectors(p).concat(p.regions.map(r => [r.a, r.b]), p.blocks || []), clear = (a, b) => !used.some(([u0, u1]) => b > u0 && a < u1);
+    const free = (a, b) => !p.regions.concat(p.blocks || []).some(r => b > (r.a ?? r[0]) && a < (r.b ?? r[1]));
     // a patch of cobbles, gravel or rumble strips
     const rs = rnd(10, Math.max(11, p.len - 50)), rl = rnd(16, 34);
     if (Math.random() < 0.4 && clear(rs, rs + rl)) { p.regions.push({ a: rs, b: rs + rl, rough: pick(['cobble', 'gravel', 'rumble']) }); used.push([rs, rs + rl]); }
-    const ds = rnd(6, Math.max(7, p.len - 60)), edge = () => p.berm ? -p.berm : pick([-1, 1]);
-    if (Math.random() < 0.35 && clear(ds, ds + 50)) dominoes(p, ds, edge());
-    const s0 = rnd(6, p.len - 20);
-    if (Math.random() < 0.3 && clear(s0, s0 + 26)) { const side = edge(); for (let k = 0; k < ri(2, 4); k++) p.cones.push({ s: s0 + k * 6, u: side * EDGE, hit: 0 }); }
+    const edge = () => p.berm ? -p.berm : pick([-1, 1]);
+    if (Math.random() < 0.35) for (let k = 0; k < 4; k++) { const ds = rnd(12, Math.max(13, p.len - 60)); if (free(ds - 10, ds + 56) && dominoes(p, ds, edge())) break; }
+    if (Math.random() < 0.3) for (let k = 0; k < 4; k++) {
+      const s0 = rnd(8, p.len - 30), nc = ri(2, 4), side = edge();
+      if (free(s0 - 4, s0 + nc * 6) && edgeFree(p, s0 - 4, s0 + (nc - 1) * 6 + 4, side)) { for (let j = 0; j < nc; j++) cone(p, s0 + j * 6, side * EDGE); break; }
+    }
     for (let s = rnd(10, 40); s < p.len - 5; s += rnd(60, 110)) p.lamps.push({ s, side: pick([-1, 1]) });
   }
 
   // ---- features: one or more pieces that carry on from the turtle ----
   const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2,
-    spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1, tumbler: 0.9 };
+    spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1, tumbler: 0.9,
+    mahjong: 1, craps: 1 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
@@ -383,8 +445,8 @@ export function createCourse(g) {
       for (let s = 34; s < p.len - 24; s += rnd(26, 34)) hammer(p, s);
       railKickers(p, 14, p.len - 10);
     } else if (kind === 'seesaw') {
-      // a see-saw across the whole track: down at this end, so the balls roll on and up it, and as they go
-      // over the middle it tips and drops them off the far end
+      // a see-saw across the whole track, a giant playing card: down at this end, so the balls roll on and up
+      // it, and as they go over the middle it tips and drops them off the far end
       const p = add(straight(rnd(120, 140), -0.06, { kind: 'seesaw' }));
       const L = 44, hp = 2.6;
       p.saw = { s0: p.len / 2, L, hp, thm: Math.asin(hp / (L / 2)), th: -Math.asin(hp / (L / 2)), thd: 0, load: 0 };
@@ -435,6 +497,18 @@ export function createCourse(g) {
       p.extra = [];
       for (let i = 0; i < p.n; i += 4) for (const h of [p.drum.R, 2 * p.drum.R]) p.extra.push([p.P[i * 3] + p.N[i * 3] * h, p.P[i * 3 + 1] + p.N[i * 3 + 1] * h, p.P[i * 3 + 2] + p.N[i * 3 + 2] * h]);
       add(straight(30, -0.08));
+    } else if (kind === 'mahjong') {
+      // A mahjong table tipping slowly from side to side, with rows of big tiles standing across it, each row
+      // with a gap somewhere else: the balls roll along a row to whichever side's down and through the gap.
+      add(straight(30, -0.07));
+      const p = add(straight(rnd(140, 165), -0.07, { kind: 'mahjong', style: 'mahjong', tilt: { A: rnd(0.2, 0.26), w: rnd(1.7, 2.1), ph: rnd(0, TAU), roll: 0 } }));
+      mahjongRows(p);
+      add(straight(30, -0.07));
+    } else if (kind === 'craps') {
+      // a craps table, with two giant dice tumbling about on it (see stepCraps)
+      const p = add(straight(rnd(150, 170), -0.08, { kind: 'craps', style: 'craps' }));
+      p.regions.push({ a: 0, b: p.len, felt: true });
+      crapsTable(p);
     } else if (kind === 'spinpads') {
       // turntables set into the track, spinning: a ball rolling onto one is swept round with it, and off
       const p = add(straight(rnd(130, 160), -0.1, { kind: 'spinpads' }));
@@ -604,7 +678,8 @@ export function createCourse(g) {
     for (const p of pieces) for (let i = 0; i < p.n; i++) for (let j = 0; j < 3; j++) { lo[j] = Math.min(lo[j], p.P[i * 3 + j]); hi[j] = Math.max(hi[j], p.P[i * 3 + j]); }
     K = {
       three: true, stuck: {}, pieces, total, PIPE, moles: pieces.flatMap(p => p.obs.filter(o => o.kind === 'mole')), wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
-      drums: pieces.filter(p => p.drum).map(p => p.drum), pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge).map(p => p.bridge), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
+      drums: pieces.filter(p => p.drum).map(p => p.drum), pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge || p.tilt).map(p => p.bridge || p.tilt),
+      cones: pieces.flatMap(p => p.cones), craps: pieces.filter(p => p.craps).map(p => p.craps), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
     };
@@ -637,13 +712,14 @@ export function createCourse(g) {
   const fr = () => ({ P: [0, 0, 0], T: [0, 0, 0], N: [0, 0, 0], B: [0, 0, 0], kB: 0 });
   const F1 = fr();
   // the ball's place in the world, from where it is on its piece (index.html's y points down, so -Y)
-  const rollAt = (p, s) => p.bridge ? p.bridge.roll * Math.sin(Math.PI * clamp(s / p.len, 0, 1)) : 0;
+  // (how far a rope bridge, or a mahjong table, is rolled over at s: a table's rigid but for a hinge at each end)
+  const rollAt = (p, s) => p.bridge ? p.bridge.roll * Math.sin(Math.PI * clamp(s / p.len, 0, 1)) : p.tilt ? p.tilt.roll * smooth(clamp(Math.min(s, p.len - s) / 12, 0, 1)) : 0;
   function place3(w) {
     const p = pieces[w.pi], f = at(p, w.s, w.fr ??= fr());
     let b = w.u, n = RW + (w.lift || 0);
     if (p.drum && w.dr) return placeDrum(w, p);
     if (p.pipe || p.berm) { const [h, h1] = pipeH(p, w.s, w.u), l = Math.hypot(1, h1); b -= h1 / l * RW; n = h + RW / l; }   // (up a halfpipe's wall, or a berm, out from it square to it)
-    if (p.bridge) { const r = rollAt(p, w.s), c = Math.cos(r), sn = Math.sin(r); [b, n] = [b * c + n * sn, -b * sn + n * c]; }   // (on a rope bridge, rolled over with it)
+    if (p.bridge || p.tilt) { const r = rollAt(p, w.s), c = Math.cos(r), sn = Math.sin(r); [b, n] = [b * c + n * sn, -b * sn + n * c]; }   // (on a rope bridge or a mahjong table, rolled over with it)
     w.X = f.P[0] + f.B[0] * b + f.N[0] * n; w.Y = f.P[1] + f.B[1] * b + f.N[1] * n; w.Z = f.P[2] + f.B[2] * b + f.N[2] * n;
     w.x = w.X; w.y = -w.Y; w.z = w.Z;
   }
@@ -748,7 +824,7 @@ export function createCourse(g) {
       else if (w.vs > MINV + 30) w.vs -= (w.vs - MINV) * 0.22 * dt;
     }
     if (p.pipe || p.berm) { const [, h1, h2] = pipeH(p, w.s, w.u); au = (au - G * ROLL * f.N[1] * h1 - h1 * h2 * w.vu * w.vu) / (1 + h1 * h1); }
-    if (p.bridge) au += G * ROLL * Math.sin(rollAt(p, w.s));   // (a rope bridge's sway rolls it toward the low side)
+    if (p.bridge || p.tilt) au += G * ROLL * Math.sin(rollAt(p, w.s));   // (a rope bridge's sway, or a table's tilt, rolls it toward the low side)
     w.vu += au * dt; w.vu *= 1 - (p.pipe || p.berm ? 0.25 : 0.7) * dt;
     for (const r of p.regions) if (w.s >= r.a && w.s < r.b && (r.u0 == null || (w.u >= r.u0 && w.u <= r.u1))) {
       if (r.belt) { w.vs = r.belt; w.vu *= 1 - 4 * dt; }
@@ -779,10 +855,8 @@ export function createCourse(g) {
     }
     if (p.saw && seesaw(w, p.saw, dt)) return;
     if (!p.saw || Math.abs(w.s - p.saw.s0) > p.saw.L / 2) fall(w, dt);
-    if (racing) for (const D of p.doms) if (D.start < 0 && Math.abs(w.u - D.side * EDGE) < RW + 2) {
-      const i = D.ds.findIndex(s => Math.abs(w.s - s) < RW); if (i >= 0) g.knockDominoes(D, i, { vx: w.vs });
-    }
-    for (const c of p.cones) if (!c.hit && Math.abs(w.s - c.s) < RW + 2 && Math.abs(w.u - c.u) < RW + 2) { c.hit = t; c.dir = Math.sign(w.vs) || 1; }
+    for (const D of p.doms) if (Math.abs(w.u - D.u) < RW + 2 && pushDominoes(D, w.s, w.vs, RW)) w.vs *= 0.985;
+    for (const c of p.cones) knockCone(c, w);
     for (const S of K.slots) if (S.p === p && Math.abs(w.s - S.s) < 3) spin(S, w);
     // off the end
     if (w.s >= p.len) {
@@ -1035,6 +1109,201 @@ export function createCourse(g) {
     flat(w);
   }
 
+  // ---- dominoes and cones: knocked about by the balls, never in their way ----
+  // A domino tips on its bottom edge: back up while its middle's behind that edge, on over once it's past,
+  // until it falls against the next one along (and leans on it, and on over with it) or lies flat.
+  const DOM = { d: 1.4, h: 8, gap: 4 - 1.4 }, DOM_TC = Math.atan(DOM.d / DOM.h);
+  const DOM_K = G * 0.6 * Math.hypot(DOM.d / 2, DOM.h / 2) / ((DOM.d * DOM.d + DOM.h * DOM.h) / 3);   // (gravity's turn on it, over its own weight to turn)
+  // Something at s moving along at vs that reaches a standing domino of row D pushes it over, its middle as
+  // fast as it's going (true if it did). The thing goes on through.
+  function pushDominoes(D, s, vs, r) {
+    if (D.raise || Math.abs(vs) < 4) return false;
+    const sd = Math.sign(vs);
+    let hit = false;
+    for (let i = 0; i < D.ds.length; i++) {
+      const th = D.th[i], c = D.ds[i] + DOM.d / 2 + Math.sin(th) * r;   // (its face, as high up as the thing)
+      if (Math.abs(th) > 1.2 || Math.abs(s - c) > r + DOM.d / 2 || (c - s) * sd < -DOM.d) continue;
+      const want = Math.abs(vs) / (DOM.h * 0.5);
+      if (D.w[i] * sd < want) { D.w[i] = sd * want; hit = true; }
+    }
+    if (hit) D.still = 0;
+    return hit;
+  }
+  function stepDominoes(D, dt) {
+    const n = D.ds.length;
+    if (D.raise) {   // (standing back up, all together)
+      let up = true;
+      for (let i = 0; i < n; i++) { D.w[i] = 0; D.th[i] -= Math.sign(D.th[i]) * Math.min(Math.abs(D.th[i]), 1.4 * dt); if (D.th[i]) up = false; }
+      if (up) D.raise = false;
+      return;
+    }
+    let down = false, moving = false;
+    for (let i = 0; i < n; i++) {
+      let th = D.th[i], w = D.w[i];
+      if (!th && !w) continue;
+      const sd = Math.sign(th || w), a = Math.abs(th), j = i + sd;
+      w += sd * DOM_K * Math.sin(a - DOM_TC) * dt;
+      th += w * dt;
+      if (th * sd < 0) { th = 0; w = Math.abs(w) < 0.6 ? 0 : w * 0.3; }   // (rocked back up past standing: a wobble the other way, or still)
+      if (Math.abs(th) >= Math.PI / 2) { th = sd * Math.PI / 2; w = 0; }   // (flat)
+      // falling against the next one: no further over than lets its top rest on it, going on over with it,
+      // and leaning on it
+      if (j >= 0 && j < n && th * sd > 0) {
+        const pj = Math.max(0, D.th[j] * sd), lim = pj + Math.asin(clamp(DOM.gap * Math.cos(pj) / DOM.h, 0, 1));
+        if (th * sd > lim) {
+          if (w * sd > D.w[j] * sd) D.w[j] = sd * Math.max(D.w[j] * sd, w * sd * 0.8);
+          th = sd * lim; w = D.w[j] * sd > 0 ? D.w[j] : 0;
+          if (lim > DOM_TC) D.w[j] += sd * 0.3 * DOM_K * Math.sin(lim - DOM_TC) * dt;
+        }
+      }
+      D.th[i] = th; D.w[i] = w;
+      if (th) down = true;
+      if (Math.abs(w) > 0.05) moving = true;
+    }
+    // a while after they've all come to rest, they stand back up
+    D.still = down && !moving ? D.still + dt : 0;
+    if (D.still > 4) { D.raise = true; D.still = 0; }
+  }
+  // A cone slides about with friction (more standing on its base than lying on its side), down the slope
+  // it's on, and bumps into the posts, walls, rails and other cones; hit hard enough it goes over, and lying
+  // down it spins. Its middle: the base's, or out along it toward its tip as it goes over.
+  const CONE = { r: 2.5, tc: 0.45, lie: 1.2 };
+  const coneOff = c => { const k = 2.5 * Math.sin(c.tilt) / Math.sin(CONE.lie); return [Math.cos(c.dir) * k, Math.sin(c.dir) * k]; };
+  function knockCone(c, w) {
+    const [os, ou] = coneOff(c), ds = c.s + os - w.s, du = c.u + ou - w.u, d = Math.hypot(ds, du), R = RW + CONE.r;
+    if (d >= R || d < 1e-6) return;
+    const ns = ds / d, nu = du / d, rel = (w.vs - c.vs) * ns + (w.vu - c.vu) * nu;
+    c.s += ns * (R - d); c.u += nu * (R - d);   // (it's shoved aside, not into anything: the ball goes on through)
+    settleCone(c, false);
+    if (rel <= 0) return;
+    c.vs += ns * rel * 1.5; c.vu += nu * rel * 1.5; c.rest = 0;
+    w.vs -= ns * rel * 0.12; w.vu -= nu * rel * 0.12;
+    if (c.tilt < CONE.lie) { if (!c.tilt) c.dir = Math.atan2(nu, ns); c.tv += rel * 0.06; }
+    else c.spin += rnd(-1, 1) * rel * 0.05;
+  }
+  // (pushed out of a circle at (s, u), r further than its own, which might be moving)
+  function coneOut(c, cs, cu, s, u, r, vs = 0, vu = 0) {
+    const ds = cs - s, du = cu - u, d = Math.hypot(ds, du), R = r + CONE.r;
+    if (d >= R || d < 1e-6) return false;
+    const ns = ds / d, nu = du / d, vn = (c.vs - vs) * ns + (c.vu - vu) * nu;
+    c.s += ns * (R - d); c.u += nu * (R - d);
+    if (vn < 0) { c.vs -= 1.4 * vn * ns; c.vu -= 1.4 * vn * nu; }
+    return true;
+  }
+  function coneSeg(c, cs, cu, sg) {
+    const ex = sg.bs - sg.as, ey = sg.bu - sg.au, L2 = ex * ex + ey * ey;
+    if (L2 < 1e-9) return;
+    const k = clamp(((cs - sg.as) * ex + (cu - sg.au) * ey) / L2, 0, 1), qs = sg.as + ex * k, qu = sg.au + ey * k;
+    let sv = sg.vs || 0, uv = sg.vu || 0;
+    if (sg.spin) { sv -= sg.spin * (qu - sg.au); uv += sg.spin * (qs - sg.as); }
+    coneOut(c, cs, cu, qs, qu, 0, sv, uv);
+  }
+  // Bumping into things: posts, walls, flippers, dominoes (which it knocks over), the rails and the ends of
+  // the piece, a few times over, so one wedged into a corner (say between a rail and a bumper against it)
+  // settles where it touches both.
+  function settleCone(c, knock) {
+    const p = c.p, [os, ou] = coneOff(c), at2 = () => [c.s + os, c.u + ou];
+    for (let pass = 0; pass < 3; pass++) {
+      for (const o of p.obs) if (!(o.kind === 'mole' && o.up < 0.4) && Math.abs(o.s - c.s - os) < o.r + CONE.r) coneOut(c, ...at2(), o.s, o.u, o.r, o.vs, o.vu);
+      for (const sg of p.segs) if (sg.on !== false) coneSeg(c, ...at2(), sg);
+      for (const F of p.flips || []) coneSeg(c, ...at2(), F.seg);
+      for (const D of p.doms) if (Math.abs(D.u - c.u - ou) < 2 + CONE.r) for (let i = 0; i < D.ds.length; i++) if (Math.abs(D.th[i]) < 1.2 && coneOut(c, ...at2(), D.ds[i] + DOM.d / 2, D.u, 2) && knock && !pass) pushDominoes(D, c.s + os, c.vs, CONE.r);
+      const lim = (p.berm && Math.sign(c.u + ou) === p.berm ? PIPE.fb + 1 : RAIL) - CONE.r;   // (a berm's wall, or the rail)
+      if (Math.abs(c.u + ou) > lim) { c.u = Math.sign(c.u + ou) * lim - ou; if (c.vu * c.u > 0) c.vu *= -0.4; }
+      if (c.s + os < CONE.r && !coneOn(p, -1)) { c.s = CONE.r - os; c.vs = Math.abs(c.vs) * 0.4; } else if (c.s + os > p.len - CONE.r && !coneOn(p, 1)) { c.s = p.len - CONE.r - os; c.vs = -Math.abs(c.vs) * 0.4; }
+    }
+  }
+  function stepCone(c, dt) {
+    const p = c.p, home = p === c.hp && c.s === c.hs && c.u === c.hu;
+    if (home && !c.vs && !c.vu && !c.tilt && !c.tv) return;   // (standing where it was put)
+    const f = at(p, c.s, F1), lying = c.tilt >= CONE.lie;
+    if (!lying && (c.tilt > 0 || c.tv)) {   // (going over, or wobbling back up)
+      c.tv += 30 * Math.sin(c.tilt - CONE.tc) * dt; c.tilt += c.tv * dt;
+      if (c.tilt <= 0) { c.tilt = 0; c.tv = 0; }
+      if (c.tilt >= CONE.lie) { c.tilt = CONE.lie; c.tv = 0; }
+    }
+    if (lying && c.spin) {   // (spinning round its middle)
+      const [a0, b0] = coneOff(c); c.dir += c.spin * dt; const [a1, b1] = coneOff(c);
+      c.s += a0 - a1; c.u += b0 - b1; c.spin *= 1 - 1.5 * dt; if (Math.abs(c.spin) < 0.05) c.spin = 0;
+    }
+    c.vs -= G * 0.6 * f.T[1] * dt; c.vu -= G * 0.6 * f.B[1] * dt;
+    const v = Math.hypot(c.vs, c.vu), dv = (lying ? 0.45 : 0.6) * G * dt;
+    if (v <= dv) c.vs = c.vu = 0; else { c.vs -= c.vs / v * dv; c.vu -= c.vu / v * dv; }
+    c.s += c.vs * dt; c.u += c.vu * dt;
+    for (const o of p.cones) if (o !== c) {   // (other cones)
+      const [s1, u1] = coneOff(c), [s2, u2] = coneOff(o), ds = c.s + s1 - o.s - s2, du = c.u + u1 - o.u - u2, d = Math.hypot(ds, du);
+      if (d >= 2 * CONE.r || d < 1e-6) continue;
+      const ns = ds / d, nu = du / d, push = (2 * CONE.r - d) / 2, vn = (c.vs - o.vs) * ns + (c.vu - o.vu) * nu;
+      c.s += ns * push; c.u += nu * push; o.s -= ns * push; o.u -= nu * push;
+      if (vn < 0) { const im = -0.75 * vn; c.vs += ns * im; c.vu += nu * im; o.vs -= ns * im; o.vu -= nu * im; o.rest = 0; }
+      settleCone(o, false);
+    }
+    settleCone(c, true);
+    // on off the end onto the next piece (or back onto the one before)
+    if (c.s < 0 || c.s > p.len) { const fwd = c.s > 0, q = coneOn(p, fwd ? 1 : -1); if (q) moveCone(c, q, fwd ? c.s - p.len : c.s + q.len); }
+    // a while after it's come to rest somewhere else, it's put back
+    c.rest = !c.vs && !c.vu && !c.tv && !c.spin ? c.rest + dt : 0;
+    if (c.rest > 5 && !c.hp.cones.some(o => o !== c && Math.hypot(o.s - c.hs, o.u - c.hu) < 2 * CONE.r + 0.5)) { moveCone(c, c.hp, c.hs); Object.assign(c, { u: c.hu, vs: 0, vu: 0, tilt: 0, tv: 0, spin: 0, rest: 0, pop: t }); }
+  }
+  // The piece after p (dir 1) or before it (-1), if the track carries straight on onto it and a cone can
+  // slide about on it.
+  function coneOn(p, dir) {
+    const q = pieces[p.i + dir], [a, b] = dir > 0 ? [p, q] : [q, p];
+    return q && !a.end && !a.lanes && !a.lane && !b.lane && !q.drum && !q.pipe && !q.tilt && !q.bridge && !q.saw && !q.craps && q.kind !== 'loop' && q.kind !== 'start' ? q : null;
+  }
+  function moveCone(c, q, s) {
+    if (c.p !== q) { c.p.cones.splice(c.p.cones.indexOf(c), 1); q.cones.push(c); c.p = q; }
+    c.s = s;
+  }
+
+  // ---- craps tables ----
+  // A die tips over one of its bottom edges into the next square, turning by a quarter about the line along
+  // that edge. Its footprint stretches toward the new square as it goes and shrinks back from the old one.
+  // A quarter turn about an axis (x along, y up, z across), and turns put together, as row-major 3×3s:
+  const turn90 = ([x, y, z]) => [x * x, x * y - z, x * z + y, y * x + z, y * y, y * z - x, z * x - y, z * y + x, z * z];
+  const mul3 = (A, B) => A.map((_, i) => { const r = (i / 3) | 0, c = i % 3; return A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c]; });
+  // the face on top: whichever of its own axes points up (and the faces as view3d.js puts them on: +x 3,
+  // -x 4, +y 2, -y 5, +z 1, -z 6)
+  const DIE_FACE = [[3, 4], [2, 5], [1, 6]], topFace = R => { for (let c = 0; c < 3; c++) if (Math.abs(R[3 + c]) > 0.5) return DIE_FACE[c][R[3 + c] > 0 ? 0 : 1]; };
+  // (a die's middle on the track)
+  const dieAt = (C, Dc) => [C.s0 + (Dc.ci + 0.5) * C.a, (Dc.cj - 0.5) * C.a];
+  // the walls round a die's footprint, moving with it as it tips
+  function dieBox(C, Dc) {
+    const a = C.a, [cs, cu] = dieAt(C, Dc), r = Dc.roll;
+    let ds = 1, du = 0, lo = -a / 2, hi = a / 2, vlo = 0, vhi = 0;
+    if (r) { [ds, du] = r.d; lo = a / 2 - a * Math.cos(r.ph); hi = a / 2 + a * Math.sin(r.ph); vlo = a * Math.sin(r.ph) * r.w; vhi = a * Math.cos(r.ph) * r.w; }
+    const P = (x, y) => [cs + ds * x - du * y, cu + du * x + ds * y], c = [P(lo, -a / 2), P(hi, -a / 2), P(hi, a / 2), P(lo, a / 2)], vm = (vlo + vhi) / 2, vel = [vm, vhi, vm, vlo];
+    Dc.segs.forEach((sg, k) => { const A = c[k], B = c[(k + 1) % 4]; Object.assign(sg, { as: A[0], au: A[1], bs: B[0], bu: B[1], vs: ds * vel[k], vu: du * vel[k] }); });
+  }
+  // Every so often the dice are thrown: each tumbles a few squares, mostly on down the table, across it, or
+  // back off the far end, never into the other's square; once they've both stopped the table calls the roll,
+  // and on a 7 or 11 everyone on the table gets a boost.
+  function stepCraps(C, dt, ws) {
+    if (C.next < 0) C.next = t + rnd(1, 3);
+    if (!C.thrown && t >= C.next) { C.thrown = true; for (const Dc of C.dice) Dc.left = ri(3, 6); }
+    for (const Dc of C.dice) {
+      const r = Dc.roll;
+      if (r) {
+        r.k = Math.min(1, r.k + dt / r.T); r.ph = Math.PI / 2 * r.k * r.k; r.w = Math.PI * r.k / r.T;   // (falling over faster and faster)
+        if (r.k === 1) { Dc.ci += r.d[0]; Dc.cj += r.d[1]; Dc.R = mul3(turn90([r.d[1], 0, -r.d[0]]), Dc.R); Dc.roll = null; Dc.left--; }
+      } else if (Dc.left > 0) {
+        const o = C.dice.find(x => x !== Dc), taken = (ci, cj) => (o.ci === ci && o.cj === cj) || (o.roll && o.ci + o.roll.d[0] === ci && o.cj + o.roll.d[1] === cj);
+        const opts = [[1, 0, 3], [-1, 0, 1], [0, 1 - 2 * Dc.cj, 2]].filter(([ds, du]) => Dc.ci + ds >= 0 && Dc.ci + ds < C.n && !taken(Dc.ci + ds, Dc.cj + du));
+        if (!opts.length) Dc.left = 0;
+        else { let x = Math.random() * opts.reduce((q, d) => q + d[2], 0), d = opts[0]; for (const q of opts) if ((x -= q[2]) < 0) { d = q; break; } Dc.roll = { d: [d[0], d[1]], k: 0, ph: 0, w: 0, T: rnd(0.26, 0.34) }; }
+      }
+      dieBox(C, Dc);
+    }
+    if (C.thrown && C.dice.every(Dc => !Dc.roll && !Dc.left)) {
+      C.thrown = false; C.next = t + rnd(2.5, 4.5);
+      const [x, y] = C.dice.map(Dc => topFace(Dc.R)), n = x + y;
+      const call = n === 7 ? 'SEVEN!' : n === 11 ? 'YO-LEVEN!' : n === 2 ? 'SNAKE EYES' : n === 12 ? 'BOXCARS' : n === 3 ? 'ACE-DEUCY' : x === y ? 'HARD ' + n : n + '';
+      const f = at(C.p, (dieAt(C, C.dice[0])[0] + dieAt(C, C.dice[1])[0]) / 2, fr()), win = n === 7 || n === 11;
+      popup(f.P[0] + f.N[0] * 22, -(f.P[1] + f.N[1] * 22), call, win ? '#3fdc7a' : '#fffaf0', f.P[2] + f.N[2] * 22);
+      if (win) for (const w of ws) if (w.m3 === 'track' && w.pi === C.p.i && !w.rank) { w.vs = Math.max(w.vs, 170); w.boostT = 1; emit(w.X, -w.Y, 10, ['#3fdc7a', '#ffd84a', '#fff'], 40, 40, 120, undefined, w.Z); }
+    }
+  }
+
   // the flippers, swinging up now and then; the roulette wheels turning; and the start gate
   function movers(dt) {
     for (const F of K.wheels) {
@@ -1151,7 +1420,7 @@ export function createCourse(g) {
   function watch(w, dt) {
     if (w.m3 !== 'track' || w.rank) return;
     if (w.dr) { w.prog = t; return; }   // (tumbling in a lottery drum: it'll be out in a moment)
-    if (Math.abs(w.vs) < 8) w.idle += dt; else w.idle = Math.max(0, w.idle - 2 * dt);
+    if (Math.abs(w.vs) < 8 && !pieces[w.pi].tilt) w.idle += dt; else w.idle = Math.max(0, w.idle - 2 * dt);   // (against a row of mahjong tiles it's rolling along to the gap)
     if (w.idle > 1.2) { w.idle = 0; w.kicks++; note('kick ' + pieces[w.pi].kind); w.vs = 90; w.vu = rnd(-30, 30); }
     if (w.dist > (w.best ?? -1) + 3) { w.best = w.dist; w.prog = t; }
     else if (t - w.prog > 8) { note('lift ' + pieces[w.pi].kind); w.s += 30; w.prog = t; w.warps++; if (w.s >= pieces[w.pi].len && pieces[w.pi].end) { w.s = 2; w.pi = pieces[w.pi].landOn; } }
@@ -1160,6 +1429,9 @@ export function createCourse(g) {
   function step(ws, dt, racing) {
     t += dt;
     movers(dt);
+    for (const C of K.craps) stepCraps(C, dt, ws);
+    for (const D of K.doms) stepDominoes(D, dt);
+    for (const c of K.cones) stepCone(c, dt);
     for (const w of ws) {
       if (w.m3 === 'track') stepTrack(w, dt, racing);
       else if (w.m3 === 'air') stepAir(w, dt);
@@ -1171,8 +1443,8 @@ export function createCourse(g) {
     for (const w of ws) if (w.m3 === 'track') { place3(w); w.dist = pieces[w.pi].s0 + w.s; }
     if (racing) for (const w of ws) watch(w, dt);
   }
-  // effects that aren't physics: slot payouts, the dominoes standing back up
-  function update(simT) {
+  // effects that aren't physics: slot payouts
+  function update() {
     for (const S of K.slots) if (S.payAt && t >= S.payAt) {
       S.payAt = 0; S.won = t;
       const w = S.who;
@@ -1181,8 +1453,6 @@ export function createCourse(g) {
       emit(x, -y, 28, ['#ffd84a', '#fff3a8', '#e8a020'], 60, 120, 260, [0.6, 1.3], z);
       popup(x, -y - 10, 'JACKPOT', '#ffd84a', z);
     }
-    for (const D of K.doms) if (D.start >= 0 && simT > D.start + D.ds.length * 0.06 + 4.6) D.start = -1;
-    for (const p of pieces) for (const c of p.cones) if (c.hit && t - c.hit > 5) c.hit = 0;
   }
 
   // New racers drop into the starting pen from above, anywhere in it.

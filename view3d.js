@@ -3,7 +3,8 @@
 // continuous piece, so loops are real loops and banked turns lean: orange track with side rails, red I-beam
 // girders, coaster rails on a plank deck, or a dark channel lined with neon, on columns down to the ground.
 // On it stand chrome pachinko pins, dice, stacks of poker chips, drum bumpers, slingshots and flippers,
-// boost pads, conveyors, a lane-splitting wall, dominoes and cones; beside it lamp posts, slot machines whose
+// boost pads, conveyors, a lane-splitting wall, dominoes and cones, playing-card see-saws, mahjong tables
+// and craps tables with giant dice; beside it lamp posts, slot machines whose
 // reels spin, and turning gears; over some of it a glass tube; funnels of glass to spiral down through; and
 // a finish arch at the bottom. All under a night sky with a city on the horizon and searchlights sweeping.
 // The racers are glossy balls in their chat colors with their initials on, rolling as they go.
@@ -17,7 +18,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const TAU = Math.PI * 2;
-const rnd = (a, b) => a + Math.random() * (b - a);
+const rnd = (a, b) => a + Math.random() * (b - a), pick = a => a[Math.floor(Math.random() * a.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ---- textures, drawn on little canvases (pixel art stays crisp) ----
@@ -198,7 +199,7 @@ export function create(g) {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
     for (const m of fading.keys()) unfade(m); fading.clear();
-    D = { tumblers: [], bridges: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
+    D = { tumblers: [], bridges: [], tables: [], dice: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     // Where the track (and the funnels and roulette wheels) is, so the columns, gears, lamps, slot machines
     // and floating decorations can be kept out of it. clearOf: is something this wide, from y0 up to y1 at
@@ -255,6 +256,25 @@ export function create(g) {
         D.bridges.push({ p, planks, ropes });
         continue;
       }
+      if (p.tilt) {
+        // a mahjong table tipping from side to side: green baize in slats edged with wood (each tipped as far
+        // as the table is there, see animate), the rows of tiles standing on it, and a pedestal under it
+        const slats = [];
+        for (let s = 1.5; s < p.len - 0.5; s += 3) {
+          const m = new THREE.Group();
+          m.add(mesh(new THREE.BoxGeometry(3.05, 1.4, 2 * HW - 2).translate(0, -0.7, 0), FELT));
+          for (const sd of [-1, 1]) m.add(mesh(new THREE.BoxGeometry(3.05, 3.4, 1.2).translate(0, 0.3, sd * (HW - 0.6)), MJ_WOOD));
+          world.add(m); slats.push({ m, s });
+        }
+        for (const R of p.rows) {
+          const m = new THREE.Group();
+          for (const T of R.tiles) m.add(mjTile(T));
+          world.add(m); slats.push({ m, s: R.s });
+        }
+        for (const s of [p.len * 0.3, p.len * 0.7]) world.add(onTrack(mesh(new THREE.CylinderGeometry(2.4, 3.4, 16, 12).translate(0, -9.4, 0), MJ_WOOD), p, s, 0, 0));
+        D.tables.push({ p, slats });
+        continue;
+      }
       if (p.lane && p.wire) {
         // a wire track: two rails the ball rolls on and a guide wire either side, held by brass ribs
         const oct = (cu, ch, r) => Array.from({ length: 6 }, (_, k) => [cu + r * Math.cos(k * TAU / 6), ch + r * Math.sin(k * TAU / 6)]);
@@ -294,6 +314,14 @@ export function create(g) {
           add(sweep(p, rect(sd * (HW - 4) - 0.8, sd * (HW - 4) + 0.8, -0.5, 0), true), STEEL);
           add(sweep(p, rect(sd * HW - 0.5, sd * HW + 0.5, 2.6, 3.4), true), STEEL);
         }
+      } else if (st === 'craps') {
+        // a craps table: felt (see the regions below) in a padded rail, lined with the rubber pyramids the dice
+        // bounce off
+        add(sweep(p, rect(-HW, HW, -3, -0.5), true), lam('#3a1a12'));
+        for (const sd of [-1, 1]) {
+          add(sweep(p, rect(sd * HW - (sd > 0 ? 1.2 : 0), sd * HW + (sd < 0 ? 1.2 : 0), -0.5, 4.2), true), lam('#5a2a1a'));
+          add(sweep(p, rect(sd > 0 ? K.RAIL - 0.3 : -K.RAIL, sd > 0 ? K.RAIL : -K.RAIL + 0.3, 0.3, 3.2), true, 0, p.n - 1, 0.5), PYRAMIDS);
+        }
       } else if (st === 'neon') {
         add(sweep(p, rect(-HW, HW, -3, 0), true), DARK);
         for (const sd of [-1, 1]) {
@@ -319,6 +347,10 @@ export function create(g) {
       // boost pads and conveyors, laid on top; their textures scroll
       for (const r of p.regions) {
         if (r.roll || r.esc) continue;
+        if (r.felt) {   // (a craps table's felt, marked out, stretched over the whole of it)
+          add(sweep(p, rect(-K.RAIL, K.RAIL, -0.5, 0.02), true, 0, p.n - 1, 1 / p.len), CRAPS_FELT);
+          continue;
+        }
         if (r.rough) {   // (cobbles, gravel or rumble strips: a texture laid over the deck)
           const a = Math.floor(r.a / p.ds), b = Math.min(p.n - 1, Math.ceil(r.b / p.ds));
           add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.14), true, a, b, r.rough === 'rumble' ? 1 / 3 : 1 / 4), ROUGH[r.rough]);
@@ -399,7 +431,7 @@ export function create(g) {
         }
       }
       for (const sg of p.segs) {
-        if (sg === p.gate) continue;
+        if (sg === p.gate || sg.tile || sg.die) continue;   // (the walls round mahjong tiles and dice: they're drawn themselves)
         const fa = frameAt(p, sg.as), A = new THREE.Vector3(fa.P[0] + fa.B[0] * sg.au, fa.P[1] + fa.B[1] * sg.au, fa.P[2] + fa.B[2] * sg.au);
         const fb = frameAt(p, sg.bs), Bv = new THREE.Vector3(fb.P[0] + fb.B[0] * sg.bu, fb.P[1] + fb.B[1] * sg.bu, fb.P[2] + fb.B[2] * sg.bu);
         const len = A.distanceTo(Bv), h = sg.wall ? 5 : 4, m = mesh(new THREE.BoxGeometry(len, h, sg.wall ? 1.6 : 2.4), sg.wall ? IRON2 : lam('#ff3b5c'));
@@ -469,13 +501,15 @@ export function create(g) {
         world.add(g0); D.pads.push({ P, top });
       }
       if (p.saw) {
-        // the see-saw: a plank with low fences along its sides, on a fulcrum across the track
+        // the see-saw: a giant playing card on a fulcrum across the track, a brass axle held up by stacks of
+        // chips at the rails
         const S = p.saw, g0 = onTrack(new THREE.Group(), p, S.s0, 0, 0), plank = new THREE.Group();
         const tri = new THREE.Shape([new THREE.Vector2(-3.5, 0), new THREE.Vector2(3.5, 0), new THREE.Vector2(0, S.hp - 0.7)]);
-        g0.add(mesh(new THREE.ExtrudeGeometry(tri, { depth: 2 * K.RAIL - 3, bevelEnabled: false }).translate(0, 0, -(K.RAIL - 1.5)), IRON2));
+        g0.add(mesh(new THREE.ExtrudeGeometry(tri, { depth: 2 * K.RAIL - 9, bevelEnabled: false }).translate(0, 0, -(K.RAIL - 4.5)), lam('#7a1a2a')));
+        g0.add(mesh(new THREE.CylinderGeometry(0.6, 0.6, 2 * K.RAIL - 0.6, 10).rotateX(Math.PI / 2).translate(0, S.hp - 0.6, 0), BRASS));
+        for (const sd of [-1, 1]) for (let i = 0; i * 1.2 < S.hp - 0.6; i++) g0.add(mesh(new THREE.CylinderGeometry(2.6, 2.6, 1.1, 20).translate(0, 0.55 + i * 1.2, sd * (K.RAIL - 3)), chipMat(g.CHIP_COLS[(i + (sd > 0)) % g.CHIP_COLS.length])));
         plank.position.y = S.hp; g0.add(plank);
-        plank.add(mesh(new THREE.BoxGeometry(S.L, 0.7, 2 * K.RAIL - 0.4).translate(0, -0.35, 0), PLANKS));
-        for (const sd of [-1, 1]) plank.add(mesh(new THREE.BoxGeometry(S.L, 1.4, 0.5).translate(0, 0.7, sd * (K.RAIL - 0.45)), lam('#c4500f')));
+        plank.add(mesh(new THREE.BoxGeometry(S.L, 0.7, 2 * K.RAIL - 0.4).translate(0, -0.35, 0), cardMats()));
         world.add(g0); D.saws.push({ S, plank });
       }
       for (const r of p.regions) {
@@ -513,7 +547,18 @@ export function create(g) {
         const pieces = Dm.ds.map(s => { const hinge = onTrack(new THREE.Group(), p, s, Dm.side * K.EDGE), tip = new THREE.Group(); tip.add(mesh(domGeo, domMat())); hinge.add(tip); world.add(hinge); return tip; });
         D.doms.push({ Dm, pieces });
       }
-      for (const c of p.cones) { const grp = onTrack(new THREE.Group(), p, c.s, c.u), inner = new THREE.Group(); inner.add(mesh(coneGeo, coneMat), mesh(new THREE.BoxGeometry(5, 0.8, 5).translate(0, 0.4, 0), DARK)); grp.add(inner); world.add(grp); D.cones.push({ c, inner }); }
+      // cones: turned toward the way they're going over, and tipping on the edge of their base that way
+      for (const c of p.cones) {
+        const grp = new THREE.Group(), yaw = new THREE.Group(), tip = new THREE.Group(), inner = new THREE.Group();
+        tip.position.x = 2.5; inner.position.x = -2.5;
+        inner.add(mesh(coneGeo, coneMat), mesh(new THREE.BoxGeometry(5, 0.8, 5).translate(0, 0.4, 0), DARK));
+        grp.add(yaw); yaw.add(tip); tip.add(inner); world.add(grp); D.cones.push({ c, grp, yaw, tip });
+      }
+      // a craps table's dice: each turned as it is (see course3d.js's stepCraps), on the edge it's tipping over
+      if (p.craps) for (const Dc of p.craps.dice) {
+        const base = new THREE.Group(), pivot = new THREE.Group(), m = mesh(new THREE.BoxGeometry(p.craps.a, p.craps.a, p.craps.a), CRAPS_DIE);
+        base.add(pivot); pivot.add(m); world.add(base); D.dice.push({ C: p.craps, Dc, base, pivot, m });
+      }
       // lamp posts beside it, their globes glowing
       for (const L of p.lamps) {
         const u = L.side * (HW + 4), lamp = beside(new THREE.Group(), p, L.s, u);
@@ -699,6 +744,105 @@ export function create(g) {
   });
   const domMat = () => domTiles[Math.floor(Math.random() * domTiles.length)];
   const coneGeo = new THREE.ConeGeometry(2.4, 6, 12).translate(0, 3.6, 0), coneMat = new THREE.MeshLambertMaterial({ map: rowsTex([['#ff7a1a'], ['#ff7a1a'], ['#fffaf0'], ['#ff7a1a'], ['#fffaf0'], ['#ff7a1a']]) });
+  // Mahjong tiles: ivory fronts, facing up the track at the balls coming, on green backs. Faces 0-8 are the
+  // dots, 9-17 the bamboo, 18-26 the characters, then the four winds and the three dragons.
+  const MJ_WOOD = lam('#6a4028'), MJ_IVORY = lam('#f4ecd8'), MJ_BACK = shiny('#1f8a5a'), mjFaces = new Map();
+  const MJ_GRID = { 1: [[1, 1]], 2: [[1, 0], [1, 2]], 3: [[0, 0], [1, 1], [2, 2]], 4: [[0, 0], [2, 0], [0, 2], [2, 2]], 5: [[0, 0], [2, 0], [1, 1], [0, 2], [2, 2]], 6: [[0, 0], [2, 0], [0, 1], [2, 1], [0, 2], [2, 2]],
+    7: [[0, 0], [1, 0], [2, 0], [0, 2], [2, 2], [0, 1], [2, 1]], 8: [[0, 0], [1, 0], [2, 0], [0, 1], [2, 1], [0, 2], [1, 2], [2, 2]], 9: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2], [2, 2]] };
+  function mjFace(i) {
+    let m = mjFaces.get(i);
+    if (m) return m;
+    m = new THREE.MeshLambertMaterial({ map: canvasTex(48, 64, (x) => {
+      x.fillStyle = '#f4ecd8'; x.fillRect(0, 0, 48, 64);
+      x.strokeStyle = '#d8ccb0'; x.lineWidth = 2; x.strokeRect(2, 2, 44, 60);
+      x.textAlign = 'center'; x.textBaseline = 'middle';
+      const n = i % 9 + 1, at = ([c, r]) => [10 + c * 14, 14 + r * 18];
+      if (i < 9) for (const [k, q] of MJ_GRID[n].entries()) {   // (dots)
+        const [cx, cy] = at(q), col = ['#1a5cff', '#2a9a4a', '#e8344e'][(k + n) % 3];
+        x.fillStyle = col; x.beginPath(); x.arc(cx, cy, n === 1 ? 14 : 6, 0, TAU); x.fill();
+        x.fillStyle = '#f4ecd8'; x.beginPath(); x.arc(cx, cy, n === 1 ? 8 : 3, 0, TAU); x.fill();
+        x.fillStyle = col; x.beginPath(); x.arc(cx, cy, n === 1 ? 4 : 1.5, 0, TAU); x.fill();
+      } else if (i < 18) for (const [k, q] of MJ_GRID[n].entries()) {   // (bamboo)
+        const [cx, cy] = at(q), h = n === 1 ? 40 : 14;
+        x.fillStyle = n === 1 || (n > 4 && k === 0) ? '#e8344e' : '#2a9a4a'; x.fillRect(cx - 2.5, cy - h / 2, 5, h);
+        x.fillStyle = '#f4ecd8'; x.fillRect(cx - 2.5, cy - 0.5, 5, 1);
+      } else if (i < 27) {   // (characters: the number over 萬)
+        x.fillStyle = '#1a2a6a'; x.font = "700 20px 'Noto Serif SC', 'SimSun', serif"; x.fillText('一二三四五六七八九'[n - 1], 24, 20);
+        x.fillStyle = '#c81e30'; x.font = "700 24px 'Noto Serif SC', 'SimSun', serif"; x.fillText('萬', 24, 45);
+      } else if (i < 31) { x.fillStyle = '#16121e'; x.font = "700 30px 'Noto Serif SC', 'SimSun', serif"; x.fillText('東南西北'[i - 27], 24, 33); }
+      else if (i < 33) { x.fillStyle = i === 31 ? '#c81e30' : '#2a9a4a'; x.font = "700 32px 'Noto Serif SC', 'SimSun', serif"; x.fillText(i === 31 ? '中' : '發', 24, 33); }
+      else { x.strokeStyle = '#1a5cff'; x.lineWidth = 3; x.strokeRect(11, 13, 26, 38); x.strokeRect(16, 18, 16, 28); }   // (the white dragon)
+    }, true) });
+    mjFaces.set(i, m);
+    return m;
+  }
+  // a tile standing at T.u across the table, its face toward -x
+  function mjTile(T) {
+    const g0 = new THREE.Group(), d = 4.2, h = 8.2, w = 6.2, fd = d * 0.62;
+    g0.position.z = T.u;
+    g0.add(mesh(new THREE.BoxGeometry(fd, h, w).translate(-d / 2 + fd / 2, h / 2, 0), [MJ_IVORY, mjFace(T.face), MJ_IVORY, MJ_IVORY, MJ_IVORY, MJ_IVORY]));
+    g0.add(mesh(new THREE.BoxGeometry(d - fd, h, w).translate(d / 2 - (d - fd) / 2, h / 2, 0), MJ_BACK));
+    return g0;
+  }
+  // A playing card for a see-saw: its face on top, lying along the track, and a red back underneath.
+  const cardCache = new Map(), SUITS = [['♠', '#16121e'], ['♥', '#d42030'], ['♦', '#d42030'], ['♣', '#16121e']];
+  const CARD_PIPS = { 2: [[1, 0], [1, 4]], 3: [[1, 0], [1, 2], [1, 4]], 4: [[0, 0], [2, 0], [0, 4], [2, 4]], 5: [[0, 0], [2, 0], [1, 2], [0, 4], [2, 4]], 6: [[0, 0], [2, 0], [0, 2], [2, 2], [0, 4], [2, 4]],
+    7: [[0, 0], [2, 0], [0, 2], [2, 2], [0, 4], [2, 4], [1, 1]], 8: [[0, 0], [2, 0], [0, 2], [2, 2], [0, 4], [2, 4], [1, 1], [1, 3]],
+    9: [[0, 0], [2, 0], [0, 4 / 3], [2, 4 / 3], [0, 8 / 3], [2, 8 / 3], [0, 4], [2, 4], [1, 2]], 10: [[0, 0], [2, 0], [0, 4 / 3], [2, 4 / 3], [0, 8 / 3], [2, 8 / 3], [0, 4], [2, 4], [1, 2 / 3], [1, 10 / 3]] };
+  const CARD_EDGE = lam('#f4f0e8'), CARD_BACK = new THREE.MeshLambertMaterial({ map: canvasTex(280, 210, (x, w, h) => {
+    x.fillStyle = '#f4f0e8'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#b81c2c'; x.fillRect(12, 12, w - 24, h - 24);
+    x.strokeStyle = '#f4f0e8'; x.lineWidth = 2;
+    for (let k = -h; k < w; k += 14) { x.beginPath(); x.moveTo(k, 12); x.lineTo(k + h, h - 12); x.moveTo(k + h, 12); x.lineTo(k, h - 12); x.stroke(); }
+    x.strokeRect(18, 18, w - 36, h - 36);
+  }, true) });
+  function cardMats() {
+    const rank = pick(['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2']), [suit, col] = pick(SUITS), key = rank + suit;
+    let m = cardCache.get(key);
+    if (m) return m;
+    // (drawn upright on a card 210 wide and 280 tall, turned a quarter so it lies along the track)
+    const face = canvasTex(280, 210, (x) => {
+      x.translate(280, 0); x.rotate(Math.PI / 2);
+      x.fillStyle = '#16121e'; x.fillRect(0, 0, 210, 280);
+      x.fillStyle = '#fbf8f0'; x.beginPath(); x.roundRect(3, 3, 204, 274, 16); x.fill();
+      x.fillStyle = col; x.textAlign = 'center'; x.textBaseline = 'middle';
+      const corner = () => { x.font = "700 30px Georgia, serif"; x.fillText(rank, 24, 28); x.font = '28px serif'; x.fillText(suit, 24, 58); };
+      corner(); x.save(); x.translate(210, 280); x.rotate(Math.PI); corner(); x.restore();
+      if (rank === 'A') { x.font = '130px serif'; x.fillText(suit, 105, 145); }
+      else if ('KQJ'.includes(rank)) {
+        x.strokeStyle = col; x.lineWidth = 3; x.strokeRect(46, 50, 118, 180);
+        x.font = "700 92px Georgia, serif"; x.fillText(rank, 105, 128); x.font = '58px serif'; x.fillText(suit, 105, 196);
+      } else { x.font = '40px serif'; for (const [c, r] of CARD_PIPS[rank]) x.fillText(suit, 62 + c * 43, 50 + r * 45); }
+    }, true);
+    m = [CARD_EDGE, CARD_EDGE, new THREE.MeshLambertMaterial({ map: face }), CARD_BACK, CARD_EDGE, CARD_EDGE];
+    cardCache.set(key, m);
+    return m;
+  }
+  // a craps table's felt, marked out with the pass line, the field and the place numbers (along the track:
+  // x along it, y across), the rubber pyramids lining its rails, and its dice: translucent-looking red with
+  // white pips, faces put on as on the little dice
+  const CRAPS_FELT = new THREE.MeshLambertMaterial({ map: canvasTex(1024, 256, (x, w, h) => {
+    x.fillStyle = '#1a7a46'; x.fillRect(0, 0, w, h);
+    x.strokeStyle = '#fffaf0'; x.lineWidth = 4; x.fillStyle = '#fffaf0'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.strokeRect(8, 8, w - 16, 44); x.strokeRect(8, h - 52, w - 16, 44);
+    x.font = "700 30px Georgia, serif";
+    for (let k = 0; k < 3; k++) { x.fillText('PASS LINE', 170 + k * 340, 31); x.fillText("DON'T PASS BAR", 170 + k * 340, h - 30); }
+    x.strokeRect(60, 70, 250, 116); x.font = "700 40px Georgia, serif"; x.fillText('COME', 185, 128);
+    x.strokeRect(350, 70, 330, 116); x.fillStyle = '#ffd84a'; x.font = "700 30px Georgia, serif"; x.fillText('2 · 3 · 4 · 9 · 10 · 11 · 12', 515, 110);
+    x.fillStyle = '#fffaf0'; x.font = "700 34px Georgia, serif"; x.fillText('FIELD', 515, 154);
+    ['4', '5', 'SIX', '8', 'NINE', '10'].forEach((n, k) => { x.strokeRect(720 + k * 48, 70, 48, 116); x.font = "700 22px Georgia, serif"; x.save(); x.translate(744 + k * 48, 128); x.rotate(-Math.PI / 2); x.fillText(n, 0, 0); x.restore(); });
+  }, true) });
+  const PYRAMIDS = new THREE.MeshLambertMaterial({ map: canvasTex(8, 8, (x) => { x.fillStyle = '#16121e'; x.fillRect(0, 0, 8, 8); x.fillStyle = '#5a5470'; x.beginPath(); x.moveTo(4, 1); x.lineTo(7, 4); x.lineTo(4, 7); x.lineTo(1, 4); x.fill(); x.fillStyle = '#8a84a0'; x.beginPath(); x.moveTo(4, 1); x.lineTo(7, 4); x.lineTo(4, 4); x.fill(); }) });
+  const CRAPS_DIE = (() => {
+    const face = n => new THREE.MeshPhongMaterial({ shininess: 120, specular: 0x666666, map: canvasTex(64, 64, (x) => {
+      x.fillStyle = '#d81e2e'; x.fillRect(0, 0, 64, 64);
+      x.fillStyle = '#b01424'; x.fillRect(0, 0, 64, 3); x.fillRect(0, 61, 64, 3); x.fillRect(0, 0, 3, 64); x.fillRect(61, 0, 3, 64);
+      x.fillStyle = '#fffaf0';
+      for (const [i, j] of PIP_AT[n]) { x.beginPath(); x.arc(14 + i * 18, 14 + j * 18, 6, 0, TAU); x.fill(); }
+    }, true) });
+    const f = [1, 2, 3, 4, 5, 6].map(face);
+    return [f[2], f[3], f[1], f[4], f[0], f[5]];   // (as dieMats: +x 3, -x 4, +y 2, -y 5, +z 1, -z 6)
+  })();
   // the 777 on the slot machines' toppers, in the middle of a sign 25 × 9 (the size of the topper's front)
   const sevens = canvasTex(25, 9, (x) => { x.fillStyle = '#ffd84a'; x.fillRect(0, 0, 25, 9); const t = g.textArt('777', '#e8344e'); x.drawImage(t, (25 - t.width) >> 1, (9 - t.height) >> 1); });
   // (round a drum lying along x, the strip's u goes round it, so up on the front of the drum is along u:
@@ -865,10 +1009,22 @@ export function create(g) {
     for (const { o, m } of D.bumpers) setMat(m, BUMP[o.lit > 0 ? 1 : 0]);
     for (const { Dm, pieces } of D.doms) pieces.forEach((tip, i) => {
       // (tipping over on whichever bottom edge it's falling toward)
-      const a = g.domAngle(Dm, i);
+      const a = Dm.th[i];
       tip.rotation.z = -a; tip.position.x = a < 0 ? 0 : 1.4; tip.children[0].position.x = a < 0 ? 0 : -1.4;
     });
-    for (const { c, inner } of D.cones) inner.rotation.z = c.hit ? -c.dir * Math.min(Math.PI / 2, (ct - c.hit) * 8) : 0;
+    for (const { c, grp, yaw, tip } of D.cones) {
+      onTrack(grp, c.p, c.s, c.u);
+      yaw.rotation.y = -c.dir; tip.rotation.z = -c.tilt;
+      grp.scale.setScalar(clamp((ct - c.pop) * 4, 0.01, 1));   // (popping back up where it was put)
+    }
+    for (const { C, Dc, base, pivot, m } of D.dice) {
+      const a = C.a, r = Dc.roll, R = Dc.R;
+      onTrack(base, C.p, C.s0 + (Dc.ci + 0.5) * a, (Dc.cj - 0.5) * a, 0.02);
+      if (r) { const [ds, du] = r.d; pivot.position.set(ds * a / 2, 0, du * a / 2); pivot.quaternion.setFromAxisAngle(_axis.set(du, 0, -ds), r.ph); m.position.set(-ds * a / 2, a / 2, -du * a / 2); }
+      else { pivot.position.set(0, 0, 0); pivot.quaternion.identity(); m.position.set(0, a / 2, 0); }
+      m.quaternion.setFromRotationMatrix(_m.set(R[0], R[1], R[2], 0, R[3], R[4], R[5], 0, R[6], R[7], R[8], 0, 0, 0, 0, 1));
+    }
+    for (const { p, slats } of D.tables) for (const q of slats) { onTrack(q.m, p, q.s, 0, 0); q.m.rotateX(g.C3.rollAt(p, q.s)); }
     for (const { m, sp, ph } of D.cogs) m.rotation.z = ph + t * sp;
     for (const { F, rotor, doors } of D.wheels) {
       rotor.rotation.y = -F.rot;   // (three's y turn goes the other way round)

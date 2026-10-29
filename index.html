@@ -2772,7 +2772,7 @@
   // In 3D the race runs on its own course (course3d.js) before anything's built; if that can't load, it's 2D.
   resize();
   const ready = DEPTH
-    ? import('./course3d.js').then(m => { C3 = m.createCourse({ RW: RB3, G, emit, popup, SYMS, knockDominoes, onFinish: w => finish(w) }); })
+    ? import('./course3d.js').then(m => { C3 = m.createCourse({ RW: RB3, G, emit, popup, SYMS, onFinish: w => finish(w) }); })
       .catch(e => console.warn("[drop] the 3D course didn't load, so it's 2D", e))
     : Promise.resolve();
   ready.then(boot);

@@ -43,9 +43,10 @@ roulette wheels they spin round and settle into a pocket of (red's a boost, gree
 halfpipes they swing from wall to wall down, whack-a-mole stretches where moles pop up and bonk them into
 the air, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts of dice, chips and
 bumpers to weave between, lane splits with a boost pad down one side and a slow conveyor down the other,
-bumpers along the rails that knock balls back into the action, dominoes, slot machines whose levers the
+bumpers along the rails that knock balls back into the action, dominoes and traffic cones the balls knock
+flying (and that bump into everything else on the track), slot machines whose levers the
 balls pull as they pass (7-7-7 pays out a boost), and moving things: turnstiles, paddle wheels, hammers
-swinging across the track, see-saws, escalators, beds of spinning rollers, spinning drums, pistons punching
+swinging across the track, see-saws that are giant playing cards, escalators, beds of spinning rollers, spinning drums, pistons punching
 out of the rails, and flipper gauntlets with flippers at all sorts of angles that flick at a ball coming by.
 And marble runs, where the track splits into three narrow lanes that wind round each other and come back
 together: walled lanes that corkscrew round the middle one, a wire-track maze where the outer two cross
@@ -53,7 +54,9 @@ over and under the middle one to the other side, or a knot where all three twist
 strands of a rope. Each ball takes whichever lane it reaches. Plus tornado spirals, round and round three
 times or so, spinning turntables set into the track that sweep the balls round, swaying rope bridges,
 lottery drums (turning wire cages the balls tumble through), berms round the outside of some turns, and
-patches of cobbles, gravel and rumble strips.
+patches of cobbles, gravel and rumble strips. Mahjong tables tip slowly from side to side, with rows of
+big tiles across them to roll along and find the gap in, and craps tables have two giant dice tumbling
+across the felt that every so often are thrown, and the table calls the roll (a 7 or 11 boosts everyone on it).
 Every curve ends in pop bumpers (one in the middle, one against each rail) that knock the balls it's flung
 outward somewhere new, and deflectors along the rails of the obstacle stretches mean no ball gets past along
 the sides. Finished balls roll on into a tray past the checkered line.
