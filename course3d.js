@@ -12,7 +12,9 @@
 // and cross over and under each other or twist round each other like a rope, tornado spirals, spinning
 // turntables set into the track, swaying rope bridges, lottery drums the balls tumble through, turns with
 // berms, patches of cobbles, gravel and rumble strips, tilting mahjong tables with rows of tiles to find a way
-// through, craps tables with two giant dice tumbling about on them, a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
+// through, craps tables with two giant dice tumbling about on them, merry-go-rounds, Ferris wheels the balls
+// ride up in gondolas and are tipped out of at the top, roller coasters (a chain lift, a big drop and
+// camelback hills the balls fly off), a pachinko slope of pins, a pinball table with bumpers, slingshots and flippers, posts
 // of dice, chips and bumpers to weave between, and lane splits with something different down each side,
 // then a finish arch. It turns back toward the middle before it wanders too far, and a piece that would run
 // into track already there is built some other way.
@@ -79,6 +81,12 @@ export function createCourse(g) {
       p.kB[i] = k;
     }
     p.kB[p.n - 1] = p.kB[p.n - 2];
+    // (and, where balls can fly off the crests, how fast it bends up toward N: negative over a crest)
+    if (p.air) {
+      p.kN = new Float64Array(p.n);
+      for (let i = 0; i < p.n - 1; i++) { let k = 0; for (let j = 0; j < 3; j++) k += (p.T[(i + 1) * 3 + j] - p.T[i * 3 + j]) / p.ds * p.N[i * 3 + j]; p.kN[i] = k; }
+      p.kN[p.n - 1] = p.kN[p.n - 2];
+    }
     let lo = Infinity; for (let i = 0; i < p.n; i++) lo = Math.min(lo, p.P[i * 3 + 1]); p.minY = lo;
     return p;
   }
@@ -325,6 +333,109 @@ export function createCourse(g) {
     }
     p.craps = C;
   }
+  // A merry-go-round: a turntable as wide as the track, carrying the balls round with it, a column in the
+  // middle and the horses' poles going round with it (posts that move, see movers), never nearer the
+  // column or a rail than a ball fits past.
+  function carousel(p) {
+    const P = { s: p.len / 2, u: 0, r: RAIL - 0.4, w: pick([-1, 1]) * rnd(1.3, 1.6), th: rnd(0, TAU), carousel: true, hr: fits(1.2), horses: [] };
+    post(p, P.s, 0, 2.4, 'column', { e: 0.4 });
+    for (let k = 0; k < 6; k++) P.horses.push(post(p, P.s, 0, 1.2, 'horse', { e: 0.5, vs: 0, vu: 0 }));
+    p.pads = [P];
+    horses(P);
+  }
+  function horses(P) {
+    P.horses.forEach((o, k) => {
+      const a = P.th + k * TAU / P.horses.length, c = Math.cos(a), sn = Math.sin(a);
+      o.s = P.s + P.hr * c; o.u = P.u + P.hr * sn; o.vs = -P.w * P.hr * sn; o.vu = P.w * P.hr * c;
+    });
+  }
+  // A Ferris wheel standing across the end of the track. Its gondolas hang from axles between two rims; the
+  // one at the bottom passes right in front of the end of the track, which narrows to a gate there that
+  // opens while a gondola with room in it is going by. A ball through the gate hops into a seat in it, rides
+  // it half way round, up over the top, where the gondola tips forward and the ball rolls out onto a chute.
+  // (along, F, and across, A, the way the track's going at its end; the gondolas' axles are R from the hub)
+  const FERRIS = { n: 14, hang: 7, half: 6, seats: [[-3, -3], [3, -3], [-3, 3], [3, 3]], tipAt: 0.35, tip: 0.55 };
+  function ferrisWheel(lead) {
+    const F = [Math.cos(tur.yaw), 0, Math.sin(tur.yaw)], A = [-F[2], 0, F[0]], R = rnd(40, 46), d = FERRIS.half + 1.5, fy = tur.y - 1.5;
+    const Wf = { lead, F, A, R, cx: tur.x + F[0] * d, cy: fy + FERRIS.hang + R, cz: tur.z + F[2] * d, th: rnd(0, TAU), w: pick([-1, 1]) * 0.55, board: -1,
+      cars: Array.from({ length: FERRIS.n }, () => ({ seats: FERRIS.seats.map(() => null), tip: 0 })) };
+    // the track narrows to the gate, as wide as a gondola's two seats across
+    const L = lead.len, gw = 5.5;
+    for (const sd of [-1, 1]) lead.segs.push({ as: L - 45, au: sd * RAIL, bs: L - 8, bu: sd * gw, e: 0.3, wall: true }, { as: L - 8, au: sd * gw, bs: L, bu: sd * gw, e: 0.3, wall: true });
+    Wf.gate = { as: L - 1, au: -gw, bs: L - 1, bu: gw, e: 0.2, on: true, fgate: true };
+    lead.segs.push(Wf.gate);
+    lead.end = 'ferris'; lead.ferris = Wf;
+    // (nothing else is built through the wheel or its legs)
+    lead.extra = [];
+    for (let k = 0; k < 20; k++) for (const r of [R + 6, R * 0.5]) { const a = k / 20 * TAU; lead.extra.push([Wf.cx + A[0] * Math.cos(a) * r, Wf.cy + Math.sin(a) * r, Wf.cz + A[2] * Math.cos(a) * r]); }
+    tur = { x: Wf.cx + F[0] * (FERRIS.half + 3), y: Wf.cy + R - FERRIS.hang - 1.2, z: Wf.cz + F[2] * (FERRIS.half + 3), yaw: tur.yaw, pitch: -0.02 };
+    return Wf;
+  }
+  // A gondola's axle (car k), and how far it's tipped forward: only near the top, where it tips out
+  const carPhi = (Wf, k) => Wf.th + k * TAU / FERRIS.n;
+  function carTip(Wf, k) { const d = Math.abs(wrap(carPhi(Wf, k) - Math.PI / 2)); return FERRIS.tip * smooth(clamp(1 - d / FERRIS.tipAt, 0, 1)); }
+  // where seat j of car k is in the world (into o: x, y, z)
+  function seatAt(Wf, k, j, o) {
+    const phi = carPhi(Wf, k), c = Math.cos(phi), sn = Math.sin(phi), tp = Wf.cars[k].tip, ct = Math.cos(tp), st = Math.sin(tp);
+    const [a, f0] = FERRIS.seats[j], h0 = -FERRIS.hang + RW + 0.3;
+    // (tipped forward about its axle: its floor tilts down toward F)
+    const f = f0 * ct + h0 * st, h = -f0 * st + h0 * ct;
+    o[0] = Wf.cx + Wf.A[0] * (Wf.R * c + a) + Wf.F[0] * f; o[1] = Wf.cy + Wf.R * sn + h; o[2] = Wf.cz + Wf.A[2] * (Wf.R * c + a) + Wf.F[2] * f;
+    return o;
+  }
+  // The wheel turning; the car going past the bottom (if it has room), with the gate open for it.
+  function stepFerrisWheel(Wf, dt) {
+    Wf.th += Wf.w * dt;
+    Wf.board = -1;
+    for (let k = 0; k < FERRIS.n; k++) {
+      const phi = carPhi(Wf, k);
+      Wf.cars[k].tip = carTip(Wf, k);
+      if (Math.sin(phi) < -0.9 && Math.abs(Wf.R * Math.cos(phi)) < 4 && Wf.cars[k].seats.includes(null)) Wf.board = k;
+    }
+    Wf.gate.on = Wf.board < 0;
+  }
+  // Through the gate: into the free seat nearest it in the car going by, with a hop (or, if it's full, back).
+  const _seat = [0, 0, 0];
+  function toFerris(w, p) {
+    const Wf = p.ferris, k = Wf.board, car = Wf.cars[k];
+    let j = -1;
+    if (k >= 0) { const c = Wf.R * Math.cos(carPhi(Wf, k)); car.seats.forEach((q, i) => { if (!q && (j < 0 || Math.abs(c + FERRIS.seats[i][0] - w.u) < Math.abs(c + FERRIS.seats[j][0] - w.u))) j = i; }); }
+    if (j < 0) { w.s = p.len - 1.5; w.vs = -Math.abs(w.vs) * 0.3; place3(w); return false; }
+    car.seats[j] = w;
+    Object.assign(w, { m3: 'ferris', fw: Wf, car: k, seat: j, hop: 0, hop0: [w.X, w.Y, w.Z], fth0: Wf.th, vx: Wf.F[0], vy: 0, vz: Wf.F[2] });
+    return true;
+  }
+  // riding: hopping in, then sat in its seat until it's half way round, and out over the front
+  function stepFerris(w, dt) {
+    const Wf = w.fw, o = seatAt(Wf, w.car, w.seat, _seat);
+    w.prog = t; w.dist = Wf.lead.s0 + Wf.lead.len;
+    if ((Wf.th - w.fth0) * Math.sign(Wf.w) >= Math.PI) {
+      Wf.cars[w.car].seats[w.seat] = null;
+      Object.assign(w, { m3: 'air', X: o[0], Y: o[1], Z: o[2], vx: Wf.F[0] * 45, vy: 60, vz: Wf.F[2] * 45, land: Wf.lead.landOn, fw: null });
+      flat(w); return;
+    }
+    if (w.hop < 1) {
+      w.hop = Math.min(1, w.hop + dt / 0.35);
+      const k = smooth(w.hop), [x, y, z] = w.hop0;
+      o[0] = x + (o[0] - x) * k; o[1] = y + (o[1] - y) * k + 5 * Math.sin(Math.PI * w.hop); o[2] = z + (o[2] - z) * k;
+    }
+    w.X = o[0]; w.Y = o[1]; w.Z = o[2];
+    flat(w);
+  }
+  // A roller coaster, as one piece: a chain lift up a steep climb, over the crest and down a big drop, then
+  // camelback hills, steep enough that the balls come off the track over each one (see stepTrack). Its
+  // pitch eases from one of these to the next.
+  function coaster() {
+    const L1 = rnd(70, 90), A = rnd(0.3, 0.36), lam = rnd(54, 62), hills = ri(2, 3), drop = rnd(40, 52);
+    const keys = [[0, tur.pitch], [18, 0.5], [L1, 0.5], [L1 + 26, -0.85], [L1 + 26 + drop, -0.85], [L1 + 60 + drop, -0.06]];
+    let x = keys.at(-1)[0];
+    for (let k = 0; k < hills; k++) { keys.push([x + lam / 4, A], [x + 3 * lam / 4, -A]); x += lam; }
+    keys.push([x + 20, -0.06]);
+    const len = x + 20, pitch = s => { let i = 1; while (i < keys.length - 1 && keys[i][0] < s) i++; const [s0, p0] = keys[i - 1], [s1, p1] = keys[i]; return ease(p0, p1, (s - s0) / (s1 - s0)); };
+    const yaw = tur.yaw, p = sweep('coaster', len, f => [yaw, pitch(f * len), 0], { style: 'coaster', air: true });
+    p.regions.push({ a: 0, b: L1 + 4, belt: 42, chain: true });
+    return p;
+  }
   function dress(p) {
     // deflectors kicking balls off the rails, dominoes and cones along the edges (where there aren't
     // deflectors on that side), lamps beside it
@@ -347,7 +458,7 @@ export function createCourse(g) {
   // ---- features: one or more pieces that carry on from the turtle ----
   const FEAT = { straight: 2, turn: 3, helix: 1.2, loop: 1.4, jump: 1.4, funnel: 1, roulette: 0.9, halfpipe: 1.1, moles: 1, plinko: 1.1, pinball: 1, posts: 1.6, lanes: 1.2,
     spinners: 1, paddles: 0.8, hammers: 0.8, seesaw: 0.8, escalator: 0.8, rollers: 0.9, pistons: 0.9, flippers: 1, braid: 1, wiremaze: 1, knot: 1, tornado: 0.8, spinpads: 0.9, bridge: 1, tumbler: 0.9,
-    mahjong: 1, craps: 1 };
+    mahjong: 1, craps: 1, carousel: 0.9, ferris: 0.7, coaster: 0.9 };
   function feature(kind) {
     const out = [];
     const add = p => { out.push(p); tur = p.after; return p; };
@@ -509,6 +620,20 @@ export function createCourse(g) {
       const p = add(straight(rnd(150, 170), -0.08, { kind: 'craps', style: 'craps' }));
       p.regions.push({ a: 0, b: p.len, felt: true });
       crapsTable(p);
+    } else if (kind === 'carousel') {
+      // a merry-go-round turning in the track, under its canopy (see carousel)
+      const p = add(straight(rnd(110, 130), -0.05, { kind: 'carousel', style: 'track' }));
+      carousel(p);
+      p.extra = [[p.P[Math.floor(p.n / 2) * 3], p.P[Math.floor(p.n / 2) * 3 + 1] + 30, p.P[Math.floor(p.n / 2) * 3 + 2]]];   // (its canopy)
+    } else if (kind === 'ferris') {
+      // a Ferris wheel the balls ride up in, and a chute down from the top of it (see ferrisWheel)
+      const lead = add(straight(rnd(80, 100), -0.02, { kind: 'station' }));
+      ferrisWheel(lead);
+      lead.gapTo = out.length;
+      dress(add(straight(rnd(50, 70), -0.14, { kind: 'land' })));
+    } else if (kind === 'coaster') {
+      add(coaster());
+      add(straight(30, -0.06));
     } else if (kind === 'spinpads') {
       // turntables set into the track, spinning: a ball rolling onto one is swept round with it, and off
       const p = add(straight(rnd(130, 160), -0.1, { kind: 'spinpads' }));
@@ -679,6 +804,7 @@ export function createCourse(g) {
     K = {
       three: true, stuck: {}, pieces, total, PIPE, moles: pieces.flatMap(p => p.obs.filter(o => o.kind === 'mole')), wheels: pieces.filter(p => p.fun?.wheel).map(p => p.fun), W, HW, RAIL, EDGE, RW, start: pieces[0], goalPiece: goal, finishS: 70, lo, hi,
       drums: pieces.filter(p => p.drum).map(p => p.drum), pads: pieces.flatMap(p => p.pads || []), bridges: pieces.filter(p => p.bridge || p.tilt).map(p => p.bridge || p.tilt),
+      carousels: pieces.flatMap(p => (p.pads || []).filter(P => P.carousel)), ferris: pieces.filter(p => p.ferris).map(p => p.ferris),
       cones: pieces.flatMap(p => p.cones), craps: pieces.filter(p => p.craps).map(p => p.craps), flippers: pieces.flatMap(p => p.flips || []), movs: pieces.flatMap(p => p.movs || []), saws: pieces.filter(p => p.saw).map(p => p.saw), doms: pieces.flatMap(p => p.doms), slots: [], bumpers: pieces.flatMap(p => p.obs.filter(o => o.kick)),
       // (what index.html's 2D bits look for, empty here)
       segs: [], hops: [], traps: [], bands: [], slats: [], cogs: [], doorsOpen: false, doorAng: 0, openT: -9, startY: 0, goal: { xa: 0, xb: 0, y: 0 },
@@ -858,11 +984,14 @@ export function createCourse(g) {
     for (const D of p.doms) if (Math.abs(w.u - D.u) < RW + 2 && pushDominoes(D, w.s, w.vs, RW)) w.vs *= 0.985;
     for (const c of p.cones) knockCone(c, w);
     for (const S of K.slots) if (S.p === p && Math.abs(w.s - S.s) < 3) spin(S, w);
+    // over a coaster's crest faster than gravity can hold it to the track: off it, and back down onto it
+    if (p.air && w.vs > 0 && w.vs * w.vs * p.kN[Math.min(p.n - 1, Math.floor(w.s / p.ds))] + G * f.N[1] < 0) { at(p, clamp(w.s, 0, p.len), F1); toAir(w, F1); w.land = p.i; return; }
     // off the end
     if (w.s >= p.len) {
       if (p.kind === 'goal' || w.pi === pieces.length - 1) { w.s = p.len - 0.01; w.vs = 0; }
       else if (p.end === 'air') { at(p, p.len, F1); toAir(w, F1); return; }
       else if (p.end === 'funnel') { place3(w); p.fun.wheel ? toWheel(w, p.fun) : toFunnel(w, p.fun); return; }
+      else if (p.end === 'ferris') { place3(w); toFerris(w, p); return; }
       else if (p.lanes) {   // (a marble run: into the lane nearest across)
         const q = p.lanes.reduce((a, c) => Math.abs(c.u0 - w.u) < Math.abs(a.u0 - w.u) ? c : a);
         w.s -= p.len; w.pi = q.i; w.u = clamp(w.u - q.u0, -q.ub, q.ub);
@@ -927,7 +1056,9 @@ export function createCourse(g) {
     const u = dx * p.B[bi * 3] + dy * p.B[bi * 3 + 1] + dz * p.B[bi * 3 + 2];
     const s = bi * p.ds + dx * p.T[bi * 3] + dy * p.T[bi * 3 + 1] + dz * p.T[bi * 3 + 2];
     if (s >= p.len && !p.end && p.i + 1 < pieces.length) { w.land = p.i + 1; flat(w); return; }   // (flying on past it: down onto the next)
-    if (h <= 0 && Math.abs(u) < HW + 8 && s > -14 && s < p.len) {
+    // (over a coaster's crest still too fast to be held to it, it flies on unless it's right into it)
+    const flying = p.air && h > -1.5 && s > 0 && s < p.len && (() => { const i = Math.min(p.n - 1, Math.floor(s / p.ds)), vs = w.vx * p.T[i * 3] + w.vy * p.T[i * 3 + 1] + w.vz * p.T[i * 3 + 2]; return vs * vs * p.kN[i] + G * p.N[i * 3 + 1] < 0; })();
+    if (h <= 0 && !flying && Math.abs(u) < HW + 8 && s > -14 && s < p.len) {
       w.m3 = 'track'; w.pi = p.i; w.s = clamp(s, 0, p.len - 0.1); w.u = clamp(u, -UB, UB);
       w.vs = w.vx * p.T[bi * 3] + w.vy * p.T[bi * 3 + 1] + w.vz * p.T[bi * 3 + 2];
       w.vu = w.vx * p.B[bi * 3] + w.vy * p.B[bi * 3 + 1] + w.vz * p.B[bi * 3 + 2];
@@ -1329,6 +1460,8 @@ export function createCourse(g) {
       Object.assign(F.seg, { as: F.ps, au: F.pu, bs: F.ps + Math.cos(F.psi) * F.len, bu: F.pu + Math.sin(F.psi) * F.len, spin: (F.psi - was) / dt });
     }
     for (const P of K.pads) P.th += P.w * dt;
+    for (const P of K.carousels) horses(P);
+    for (const Wf of K.ferris) stepFerrisWheel(Wf, dt);
     for (const D of K.drums) D.th += D.w * dt;
     for (const B of K.bridges) B.roll = B.A * Math.sin(B.w * t + B.ph);
     for (const M of K.movs) {
@@ -1420,6 +1553,7 @@ export function createCourse(g) {
   function watch(w, dt) {
     if (w.m3 !== 'track' || w.rank) return;
     if (w.dr) { w.prog = t; return; }   // (tumbling in a lottery drum: it'll be out in a moment)
+    if (pieces[w.pi].ferris && w.s > pieces[w.pi].len - 50) { w.prog = t; w.idle = 0; return; }   // (queueing for the Ferris wheel)
     if (Math.abs(w.vs) < 8 && !pieces[w.pi].tilt) w.idle += dt; else w.idle = Math.max(0, w.idle - 2 * dt);   // (against a row of mahjong tiles it's rolling along to the gap)
     if (w.idle > 1.2) { w.idle = 0; w.kicks++; note('kick ' + pieces[w.pi].kind); w.vs = 90; w.vu = rnd(-30, 30); }
     if (w.dist > (w.best ?? -1) + 3) { w.best = w.dist; w.prog = t; }
@@ -1437,6 +1571,7 @@ export function createCourse(g) {
       else if (w.m3 === 'air') stepAir(w, dt);
       else if (w.m3 === 'funnel') stepFunnel(w, dt);
       else if (w.m3 === 'wheel') stepWheel(w, dt);
+      else if (w.m3 === 'ferris') stepFerris(w, dt);
     }
     pairs(ws);
     for (const w of ws) if (w.m3 === 'wheel') { frets(w, w.F); w.X = w.F.cx + Math.cos(w.fth) * w.frad; w.Z = w.F.cz + Math.sin(w.fth) * w.frad; w.Y = w.wy + RW; flat(w); }   // (not pushed into one by another ball)

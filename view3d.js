@@ -4,7 +4,8 @@
 // girders, coaster rails on a plank deck, or a dark channel lined with neon, on columns down to the ground.
 // On it stand chrome pachinko pins, dice, stacks of poker chips, drum bumpers, slingshots and flippers,
 // boost pads, conveyors, a lane-splitting wall, dominoes and cones, playing-card see-saws, mahjong tables
-// and craps tables with giant dice; beside it lamp posts, slot machines whose
+// and craps tables with giant dice, merry-go-rounds with their horses bobbing, and wooden roller coasters
+// on white trestles with a chain up the lift hill; Ferris wheels; beside it lamp posts, slot machines whose
 // reels spin, and turning gears; over some of it a glass tube; funnels of glass to spiral down through; and
 // a finish arch at the bottom. All under a night sky with a city on the horizon and searchlights sweeping.
 // The racers are glossy balls in their chat colors with their initials on, rolling as they go.
@@ -199,7 +200,7 @@ export function create(g) {
     if (world) { scene.remove(world); dispose(world); }
     K = g.K; world = new THREE.Group(); scene.add(world);
     for (const m of fading.keys()) unfade(m); fading.clear();
-    D = { tumblers: [], bridges: [], tables: [], dice: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
+    D = { carousels: [], ferris: [], fgates: [], tumblers: [], bridges: [], tables: [], dice: [], pads: [], flippers: [], doms: [], cones: [], bumpers: [], cogs: [], decor: [], slots: [], beams: [], wheels: [], moles: [], spins: [], paddles: [], hammers: [], pistons: [], saws: [], escs: [], rollers: [], drums: [], gate: null };
     const HW = K.HW, ground = K.lo[1] - 70, lists = new Map();
     // Where the track (and the funnels and roulette wheels) is, so the columns, gears, lamps, slot machines
     // and floating decorations can be kept out of it. clearOf: is something this wide, from y0 up to y1 at
@@ -219,6 +220,11 @@ export function create(g) {
     };
     // (where a piece is at s, as a matrix: for things built along it)
     const frameMatrix = (p, s) => { const f = frameAt(p, s); return new THREE.Matrix4().makeBasis(_vx.fromArray(f.T), _vy.fromArray(f.N), _vz.fromArray(f.B)).setPosition(f.P[0], f.P[1], f.P[2]); };
+    // (a square beam w thick from a to b, as geometry)
+    const beamGeo = (a, b, w) => {
+      const d = new THREE.Vector3().subVectors(b, a), geo = new THREE.BoxGeometry(w, d.length(), w);
+      return geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize())).translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    };
     const ribGeo = mergeGeometries([new THREE.BoxGeometry(0.5, 0.4, 7.6).translate(0, -0.35, 0), ...[-1, 1].map(sd => new THREE.BoxGeometry(0.4, 2.8, 0.4).translate(0, 1, sd * 3.6))]);
     // (merged piece by piece, so a piece in the way of the camera can fade on its own)
     let curP = null;
@@ -314,6 +320,13 @@ export function create(g) {
           add(sweep(p, rect(sd * (HW - 4) - 0.8, sd * (HW - 4) + 0.8, -0.5, 0), true), STEEL);
           add(sweep(p, rect(sd * HW - 0.5, sd * HW + 0.5, 2.6, 3.4), true), STEEL);
         }
+      } else if (st === 'coaster') {
+        // a wooden roller coaster: a plank deck, red running rails and white side boards (on trestles, below)
+        add(sweep(p, rect(-HW + 1, HW - 1, -1.8, -0.5), true, 0, p.n - 1, 0.25), PLANKS);
+        for (const sd of [-1, 1]) {
+          add(sweep(p, rect(sd * (HW - 4) - 0.8, sd * (HW - 4) + 0.8, -0.5, 0), true), shiny('#e8344e'));
+          add(sweep(p, rect(sd * HW - (sd > 0 ? 1 : 0), sd * HW + (sd < 0 ? 1 : 0), -1.8, 3), true), COASTER_WHITE);
+        }
       } else if (st === 'craps') {
         // a craps table: felt (see the regions below) in a padded rail, lined with the rubber pyramids the dice
         // bounce off
@@ -351,6 +364,10 @@ export function create(g) {
           add(sweep(p, rect(-K.RAIL, K.RAIL, -0.5, 0.02), true, 0, p.n - 1, 1 / p.len), CRAPS_FELT);
           continue;
         }
+        if (r.chain) {   // (a coaster's lift chain, up the middle)
+          add(sweep(p, rect(-1.8, 1.8, -0.4, 0.3), true, Math.floor(r.a / p.ds), Math.min(p.n - 1, Math.ceil(r.b / p.ds)), 0.5), CHAIN);
+          continue;
+        }
         if (r.rough) {   // (cobbles, gravel or rumble strips: a texture laid over the deck)
           const a = Math.floor(r.a / p.ds), b = Math.min(p.n - 1, Math.ceil(r.b / p.ds));
           add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.14), true, a, b, r.rough === 'rumble' ? 1 / 3 : 1 / 4), ROUGH[r.rough]);
@@ -374,7 +391,22 @@ export function create(g) {
       if (p.kind === 'goal') add(sweep(p, rect(-K.RAIL + 0.2, K.RAIL - 0.2, 0.02, 0.3), true, Math.floor((K.finishS - 8) / p.ds), Math.ceil((K.finishS + 8) / p.ds), sq), CHECKER);
       // columns down to the ground (a marble run's lanes on thin rods), only where they're clear of all the
       // other track, and the funnels and roulette wheels
-      if (p.kind !== 'loop' && !p.bridge) for (let s = 20; s < p.len - 10; s += p.lane ? 40 : 55) {
+      if (p.style === 'coaster') for (let s = 4; s < p.len - 2; s += 10) {
+        // a coaster's trestles: a white bent under it every so often, posts down to the ground at each side,
+        // tied across and braced corner to corner
+        const f = frameAt(p, s), at = (u, h) => new THREE.Vector3(f.P[0] + f.B[0] * u + f.N[0] * h, f.P[1] + f.B[1] * u + f.N[1] * h, f.P[2] + f.B[2] * u + f.N[2] * h);
+        const top = [at(-HW + 1, -1.8), at(HW - 1, -1.8)], y0 = Math.min(top[0].y, top[1].y);
+        if (y0 - ground < 8 || !clearOf(f.P[0], f.P[2], HW, ground, y0, p, s)) continue;
+        for (const q of top) add(beamGeo(q, new THREE.Vector3(q.x, ground, q.z), 1.1), COASTER_WHITE);
+        let prev = null;
+        for (let y = y0; y > ground + 2; y -= 16) {
+          const [a, b] = top.map(q => new THREE.Vector3(q.x, y, q.z));
+          add(beamGeo(a, b, 0.7), COASTER_WHITE);
+          if (prev) { add(beamGeo(prev[0], b, 0.5), COASTER_WHITE); add(beamGeo(prev[1], a, 0.5), COASTER_WHITE); }
+          prev = [a, b];
+        }
+      }
+      else if (p.kind !== 'loop' && !p.bridge) for (let s = 20; s < p.len - 10; s += p.lane ? 40 : 55) {
         const f = frameAt(p, s), dn = p.lane ? 0.8 : 7, x = f.P[0] - f.N[0] * dn, y = f.P[1] - f.N[1] * dn, z = f.P[2] - f.N[2] * dn;
         if (y - ground < 8 || !clearOf(x, z, p.lane ? 0.6 : 2, ground, y, p, s)) continue;
         if (p.lane) { add(new THREE.CylinderGeometry(0.4, 0.4, y - ground, 6).translate(x, (y + ground) / 2, z), STEEL); continue; }
@@ -432,6 +464,15 @@ export function create(g) {
       }
       for (const sg of p.segs) {
         if (sg === p.gate || sg.tile || sg.die) continue;   // (the walls round mahjong tiles and dice: they're drawn themselves)
+        if (sg.fgate) {
+          // the Ferris wheel's gate: a striped bar that swings up while a gondola with room is going by
+          const g0 = onTrack(new THREE.Group(), p, sg.as, sg.au - 1, 0), bar = new THREE.Group();
+          g0.add(mesh(new THREE.BoxGeometry(1.4, 6, 1.4).translate(0, 3, -0.7), lam(C.dark)));
+          bar.position.y = 4.5; g0.add(bar);
+          bar.add(mesh(new THREE.BoxGeometry(0.9, 0.9, sg.bu - sg.au + 1).translate(0, 0, (sg.bu - sg.au + 1) / 2), GATE_BAR));
+          world.add(g0); D.fgates.push({ sg, bar, k: 0 });
+          continue;
+        }
         const fa = frameAt(p, sg.as), A = new THREE.Vector3(fa.P[0] + fa.B[0] * sg.au, fa.P[1] + fa.B[1] * sg.au, fa.P[2] + fa.B[2] * sg.au);
         const fb = frameAt(p, sg.bs), Bv = new THREE.Vector3(fb.P[0] + fb.B[0] * sg.bu, fb.P[1] + fb.B[1] * sg.bu, fb.P[2] + fb.B[2] * sg.bu);
         const len = A.distanceTo(Bv), h = sg.wall ? 5 : 4, m = mesh(new THREE.BoxGeometry(len, h, sg.wall ? 1.6 : 2.4), sg.wall ? IRON2 : lam('#ff3b5c'));
@@ -495,6 +536,7 @@ export function create(g) {
         }
       }
       for (const P of p.pads || []) {
+        if (P.carousel) { D.carousels.push(carouselOn(p, P)); continue; }
         // a turntable: its spinning top just proud of the deck, in a steel ring
         const g0 = onTrack(new THREE.Group(), p, P.s, P.u, 0), top = mesh(new THREE.CylinderGeometry(P.r, P.r, 0.3, 32).translate(0, 0.1, 0), [lam('#3a3450'), new THREE.MeshLambertMaterial({ map: padTex }), lam('#3a3450')]);
         g0.add(top, mesh(new THREE.TorusGeometry(P.r + 0.3, 0.35, 6, 32).rotateX(Math.PI / 2).translate(0, 0.15, 0), STEEL));
@@ -649,6 +691,49 @@ export function create(g) {
         }
       }
       D.wheels.push({ F, rotor, doors });
+    }
+    // Ferris wheels: two rims of lights on spokes, turning on a hub held up by legs at each side, and the
+    // gondolas hanging from axles between the rims (kept upright, but for tipping forward at the top: see
+    // course3d.js's seatAt)
+    for (const Wf of K.ferris) {
+      const R = Wf.R, half = 6, rx = half + 1.5, hang = 7, n = Wf.cars.length;
+      const base = new THREE.Group(); base.position.set(Wf.cx, Wf.cy, Wf.cz);
+      base.quaternion.setFromRotationMatrix(_m.makeBasis(_vx.fromArray(Wf.F), _vy.set(0, 1, 0), _vz.fromArray(Wf.A))); world.add(base);
+      const rotor = new THREE.Group(); base.add(rotor);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z), ring = (k, m) => [Math.sin(k * TAU / m), Math.cos(k * TAU / m)];
+      const frame = [], bulbs = [[], []];
+      for (const x of [-rx, rx]) {
+        for (const r of [R, R * 0.55]) frame.push(new THREE.TorusGeometry(r, r === R ? 0.7 : 0.45, 6, 96).rotateY(Math.PI / 2).translate(x, 0, 0));
+        for (let k = 0; k < n; k++) { const [y, z] = ring(k, n); frame.push(beamGeo(V(x * 0.45, 0, 0), V(x, y * R, z * R), 0.5)); }
+        for (let k = 0; k < 4 * n; k++) { const [y, z] = ring(k + 0.5, 4 * n); bulbs[k & 1].push(new THREE.SphereGeometry(0.55, 6, 4).translate(x * 1.06, y * R, z * R)); }
+      }
+      for (let k = 0; k < n; k++) { const [y, z] = ring(k, n); frame.push(new THREE.CylinderGeometry(0.45, 0.45, 2 * rx, 8).rotateZ(Math.PI / 2).translate(0, y * R, z * R)); }
+      rotor.add(mesh(mergeGeometries(frame), lam('#e8e6f4')));
+      bulbs.forEach((b, i) => rotor.add(mesh(mergeGeometries(b), glowing(i ? '#ff3bd0' : '#ffe9a0'), false)));
+      for (const x of [-rx - 0.8, rx + 0.8]) rotor.add(mesh(new THREE.CylinderGeometry(5, 5, 0.8, 20).rotateZ(Math.PI / 2).translate(x, 0, 0), shiny('#ff3b5c')));
+      base.add(mesh(new THREE.CylinderGeometry(2.4, 2.4, 2 * rx + 9, 14).rotateZ(Math.PI / 2), STEEL));
+      // the legs, out to feet level with the bottom of the wheel, and columns from there to the ground
+      const fy = -(R + hang + 3), legs = [];
+      for (const x of [-(rx + 3.5), rx + 3.5]) {
+        for (const sd of [-1, 1]) legs.push(beamGeo(V(x, 0, 0), V(x, fy, sd * (R + 4)), 2.2));
+        legs.push(beamGeo(V(x, fy * 0.55, -(R + 4) * 0.55), V(x, fy * 0.55, (R + 4) * 0.55), 1.2));
+      }
+      base.add(mesh(mergeGeometries(legs), IRON2));
+      for (const x of [-(rx + 3.5), rx + 3.5]) for (const sd of [-1, 1]) {
+        const z = sd * (R + 4), px = Wf.cx + Wf.F[0] * x + Wf.A[0] * z, py = Wf.cy + fy, pz = Wf.cz + Wf.F[2] * x + Wf.A[2] * z;
+        if (py - ground > 2 && clearOf(px, pz, 2, ground, py)) world.add(mesh(new THREE.CylinderGeometry(1.4, 1.8, py - ground, 8).translate(px, (py + ground) / 2, pz), IRON2));
+      }
+      // the gondolas: open tubs on hangers, each its own color
+      const cars = Wf.cars.map((_, k) => {
+        const g0 = new THREE.Group(), tub = new THREE.Group(), col = lam(['#ff3b5c', '#3ff8ff', '#ffe600', '#ff3bd0', '#3fdc7a', '#ff9a1f'][k % 6]);
+        g0.quaternion.copy(base.quaternion); g0.add(tub);
+        tub.add(mesh(new THREE.BoxGeometry(2 * half, 0.6, 13).translate(0, -hang, 0), lam(C.dark)));
+        for (const sx of [-1, 1]) tub.add(mesh(new THREE.BoxGeometry(0.5, 4.5, 13).translate(sx * half, -hang + 2.25, 0), col), mesh(new THREE.BoxGeometry(0.4, hang - 4.5, 0.4).translate(sx * half, -(hang - 4.5) / 2, 0), STEEL));
+        for (const sz of [-1, 1]) tub.add(mesh(new THREE.BoxGeometry(2 * half, 4.5, 0.5).translate(0, -hang + 2.25, sz * 6.5), col));
+        world.add(g0);
+        return { g0, tub };
+      });
+      D.ferris.push({ Wf, rotor, cars });
     }
     // the finish arch
     {
@@ -843,6 +928,58 @@ export function create(g) {
     const f = [1, 2, 3, 4, 5, 6].map(face);
     return [f[2], f[3], f[1], f[4], f[0], f[5]];   // (as dieMats: +x 3, -x 4, +y 2, -y 5, +z 1, -z 6)
   })();
+  // a wooden coaster's white timbers, its lift chain, and the Ferris wheel's gate bar
+  const COASTER_WHITE = lam('#f4f0e8');
+  const chainTex = canvasTex(8, 4, (x) => { x.fillStyle = '#16121e'; x.fillRect(0, 0, 8, 4); x.fillStyle = '#a8a8bc'; x.fillRect(0, 1, 3, 2); x.fillRect(4, 0, 3, 1); x.fillRect(4, 3, 3, 1); x.fillStyle = '#6a6488'; x.fillRect(3, 1, 1, 2); x.fillRect(7, 1, 1, 2); });
+  const CHAIN = new THREE.MeshLambertMaterial({ map: chainTex });
+  const GATE_BAR = new THREE.MeshLambertMaterial({ map: rowsTex([['#ff3b5c', '#ff3b5c', '#fffaf0', '#fffaf0']]) });
+  // A merry-go-round: its turning deck in slices of cream and red, a mirrored column in the middle, the horses
+  // on brass poles (where the poles are: see course3d.js's horses), bobbing up and down, and a striped canopy
+  // with a scalloped valance ringed with bulbs, all turning together.
+  const carDeckTex = canvasTex(128, 128, (x) => {
+    for (let k = 0; k < 16; k++) { x.fillStyle = k % 2 ? '#c8343e' : '#f4e8d0'; x.beginPath(); x.moveTo(64, 64); x.arc(64, 64, 64, k / 16 * TAU, (k + 1) / 16 * TAU); x.fill(); }
+    x.strokeStyle = '#e8b84a'; x.lineWidth = 3; for (const r of [62, 40]) { x.beginPath(); x.arc(64, 64, r, 0, TAU); x.stroke(); }
+  }, true);
+  const CANOPY = new THREE.MeshLambertMaterial({ map: (() => { const t = rowsTex([['#c8343e', '#c8343e', '#f4e8d0', '#f4e8d0']]); t.repeat.set(8, 1); return t; })(), side: THREE.DoubleSide });
+  const VALANCE = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, map: (() => { const t = canvasTex(16, 8, (x) => {
+    x.fillStyle = '#e8b84a'; x.fillRect(0, 0, 16, 3);
+    x.fillStyle = '#c8343e'; x.beginPath(); x.moveTo(0, 3); x.lineTo(16, 3); x.lineTo(16, 5); x.arc(12, 5, 4, 0, Math.PI); x.arc(4, 5, 4, 0, Math.PI); x.fill();
+  }); t.repeat.set(24, 1); return t; })(), transparent: true, alphaTest: 0.5 });
+  const HORSE_COLS = ['#fffaf0', '#3a2a24', '#c8a06a', '#8a8498'], SADDLE_COLS = ['#c8343e', '#3ff8ff', '#ffd84a', '#ff3bd0'];
+  // a horse facing +x, its pole through its middle
+  function horse(k) {
+    const g0 = new THREE.Group(), coat = lam(HORSE_COLS[k % 4]), dark = lam('#16121e');
+    const part = (geo, mat, x, y, z = 0, rz = 0) => { const m = mesh(geo, mat); m.position.set(x, y, z); m.rotation.z = rz; g0.add(m); };
+    part(new THREE.SphereGeometry(1, 14, 10).scale(3, 1.4, 1.15), coat, 0, 0);
+    part(new THREE.BoxGeometry(1.3, 3, 1.1), coat, 2.5, 1.6, 0, -0.5);
+    part(new THREE.BoxGeometry(2.5, 1.1, 1.0), coat, 3.7, 2.9, 0, -0.35);
+    part(new THREE.BoxGeometry(0.4, 2.8, 0.5), dark, 2.0, 2.0, 0, -0.5);   // (mane)
+    for (const z of [-0.5, 0.5]) { part(new THREE.BoxGeometry(0.5, 2.8, 0.5), coat, 2.3, -1.7, z, 0.7); part(new THREE.BoxGeometry(0.5, 2.8, 0.5), coat, -2.2, -1.7, z, -0.7); }
+    part(new THREE.BoxGeometry(0.5, 2.4, 0.4), dark, -3.3, -0.2, 0, 0.8);   // (tail)
+    part(new THREE.BoxGeometry(1.9, 0.4, 2.5), lam(SADDLE_COLS[k % 4]), 0, 1.35);
+    return g0;
+  }
+  function carouselOn(p, P) {
+    const g0 = onTrack(new THREE.Group(), p, P.s, P.u, 0), rot = new THREE.Group(), H = 19, Rc = P.r + 3, n = P.horses.length;
+    g0.add(rot);
+    rot.add(mesh(new THREE.CylinderGeometry(P.r, P.r, 0.5, 48).translate(0, 0.05, 0), [lam('#7a1a2a'), new THREE.MeshLambertMaterial({ map: carDeckTex }), lam('#7a1a2a')]));
+    rot.add(mesh(new THREE.CylinderGeometry(2.4, 2.4, H, 16).translate(0, H / 2, 0), shiny('#f0dca8', { shininess: 140, specular: 0xffffff })));
+    const hs = [];
+    for (let k = 0; k < n; k++) {
+      const a = k * TAU / n, x = P.hr * Math.cos(a), z = P.hr * Math.sin(a);
+      rot.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, H, 10).translate(x, H / 2, z), BRASS), mesh(new THREE.CylinderGeometry(1.2, 1.2, 1.2, 12).translate(x, 0.6, z), BRASS));
+      const hg = horse(k); hg.position.set(x, 10.2, z); hg.rotation.y = -(a + Math.PI / 2) + (P.w < 0 ? Math.PI : 0);   // (facing the way it's going round)
+      rot.add(hg); hs.push(hg);
+    }
+    // the canopy
+    rot.add(mesh(new THREE.CylinderGeometry(Rc, Rc, 0.8, 40).translate(0, H + 0.4, 0), lam('#7a1a2a')));
+    rot.add(mesh(new THREE.ConeGeometry(Rc, 8, 40, 1, true).translate(0, H + 4.8, 0), CANOPY));
+    rot.add(mesh(new THREE.CylinderGeometry(Rc + 0.1, Rc + 0.1, 2.6, 40, 1, true).translate(0, H - 1.1, 0), VALANCE, false));
+    rot.add(mesh(new THREE.SphereGeometry(1.4, 12, 8).translate(0, H + 9.4, 0), BRASS), mesh(new THREE.ConeGeometry(0.5, 3, 8).translate(0, H + 11.6, 0), BRASS));
+    for (let k = 0; k < 2; k++) rot.add(mesh(mergeGeometries(Array.from({ length: 16 }, (_, i) => { const a = (2 * i + k) / 32 * TAU; return new THREE.SphereGeometry(0.5, 6, 4).translate(Rc * Math.cos(a), H + 0.1, Rc * Math.sin(a)); })), glowing(k ? '#fff3c0' : '#ff3bd0'), false));
+    world.add(g0);
+    return { P, rot, hs };
+  }
   // the 777 on the slot machines' toppers, in the middle of a sign 25 × 9 (the size of the topper's front)
   const sevens = canvasTex(25, 9, (x) => { x.fillStyle = '#ffd84a'; x.fillRect(0, 0, 25, 9); const t = g.textArt('777', '#e8344e'); x.drawImage(t, (25 - t.width) >> 1, (9 - t.height) >> 1); });
   // (round a drum lying along x, the strip's u goes round it, so up on the front of the drum is along u:
@@ -977,6 +1114,17 @@ export function create(g) {
     }
     for (const { S, plank } of D.saws) plank.rotation.z = -S.th;
     for (const { P, top } of D.pads) top.rotation.y = -P.th;
+    for (const { P, rot, hs } of D.carousels) { rot.rotation.y = -P.th; hs.forEach((h, k) => { h.position.y = 10.2 + 1.1 * Math.sin(ct * 2.6 + k * 2.1); }); }
+    chainTex.offset.x -= dt * 4;
+    for (const G of D.fgates) { G.k += ((G.sg.on ? 0 : 1) - G.k) * Math.min(1, dt * 12); G.bar.rotation.x = -Math.PI / 2 * G.k; }
+    for (const { Wf, rotor, cars } of D.ferris) {
+      rotor.rotation.x = -Wf.th;
+      cars.forEach(({ g0, tub }, k) => {
+        const phi = Wf.th + k * TAU / cars.length, c = Math.cos(phi) * Wf.R, sn = Math.sin(phi) * Wf.R;
+        g0.position.set(Wf.cx + Wf.A[0] * c, Wf.cy + sn, Wf.cz + Wf.A[2] * c);
+        tub.rotation.z = -Wf.cars[k].tip;   // (tipping forward, toward F)
+      });
+    }
     for (const { Dm, rot } of D.tumblers) rot.rotation.x = -Dm.th;
     // the rope bridges: each plank rolled over as far as the bridge is there, and the hand ropes strung along
     // the tops of the posts, from tower to tower

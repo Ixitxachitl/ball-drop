@@ -57,6 +57,11 @@ lottery drums (turning wire cages the balls tumble through), berms round the out
 patches of cobbles, gravel and rumble strips. Mahjong tables tip slowly from side to side, with rows of
 big tiles across them to roll along and find the gap in, and craps tables have two giant dice tumbling
 across the felt that every so often are thrown, and the table calls the roll (a 7 or 11 boosts everyone on it).
+There are fairground rides too: merry-go-rounds turning in the track, whose floor sweeps the balls round
+while the horses' poles bat them about; Ferris wheels, where the track narrows to a gate at the bottom, the
+balls hop into the gondolas going by, ride up and over and are tipped out onto a chute at the top; and
+wooden roller coasters on white trestles, with a chain up the lift hill, a big first drop and camelback
+hills the balls fly off.
 Every curve ends in pop bumpers (one in the middle, one against each rail) that knock the balls it's flung
 outward somewhere new, and deflectors along the rails of the obstacle stretches mean no ball gets past along
 the sides. Finished balls roll on into a tray past the checkered line.
