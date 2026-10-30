@@ -818,12 +818,11 @@ export function create(g) {
       g0.position.fromArray(Sk.C);
       g0.quaternion.setFromRotationMatrix(_m.makeBasis(_vx.fromArray(Sk.e1), _vy.fromArray(Sk.n), _vz.fromArray(Sk.A)));
       g0.add(mesh(new THREE.PlaneGeometry(w2, w2).rotateX(-Math.PI / 2), skeeFace(Sk.cfg)));
-      g0.add(mesh(new THREE.BoxGeometry(w2, 3, w2).translate(0, -1.55, 0), lam('#2a1a14')));
+      g0.add(mesh(new THREE.BoxGeometry(w2, 12, w2).translate(0, -6.05, 0), lam('#2a1a14')));   // (the cabinet the balls drop into)
       const lipGeo = L => new THREE.LatheGeometry([[L.R - 0.3, 0], [L.R + 0.3, 0], [L.R + 0.3, lipH], [L.R - 0.3, lipH], [L.R - 0.3, 0]].map(([r, y]) => new THREE.Vector2(r, y)), Math.max(24, Math.round(L.R * 6))).translate(L.x, 0, L.y);
       g0.add(mesh(mergeGeometries(lips.map(lipGeo)), shiny('#f0dca8')));
       for (const sd of [-1, 1]) g0.add(mesh(new THREE.BoxGeometry(w2 + 4, 7, 1.4).translate(0, 2.5, sd * (half + 0.7)), lam('#c8343e')));
       g0.add(mesh(new THREE.BoxGeometry(1.4, 7, w2).translate(half + 0.7, 2.5, 0), lam('#c8343e')));
-      g0.add(mesh(new THREE.BoxGeometry(4, 1, w2).translate(-half - 2, -2, 0), lam('#16121e')));   // (the gutter)
       const net = mesh(new THREE.BoxGeometry(0.4, 22, w2 + 2).translate(half + 1.2, 13, 0), GLASS, false); net.renderOrder = 2; g0.add(net);
       for (let k = 0; k < 2; k++) g0.add(mesh(mergeGeometries(Array.from({ length: 11 }, (_, i) => new THREE.SphereGeometry(0.6, 6, 4).translate(half + 0.7, 6.4, -half + (2 * i + k) * w2 / 22 + w2 / 44))), glowing(k ? '#ffe9a0' : '#ff3bd0'), false));
       world.add(g0);
@@ -1063,12 +1062,13 @@ export function create(g) {
     return new THREE.MeshLambertMaterial({ map: canvasTex(1024, 1024, (x) => {
       x.fillStyle = '#1f5cc8'; x.fillRect(0, 0, 1024, 1024);
       for (let k = rings.length - 1; k >= 0; k--) { x.fillStyle = k ? k % 2 ? '#fffaf0' : '#c8343e' : '#e8b84a'; x.beginPath(); x.arc(c, c, rings[k] * S, 0, TAU); x.fill(); }
-      for (const sd of [-1, 1]) { x.fillStyle = '#e8b84a'; x.beginPath(); x.arc(c + pocket[0] * S, c + sd * pocket[1] * S, pocket[2] * S, 0, TAU); x.fill(); }
-      x.fillStyle = '#0a0610'; for (const H of holes) { x.beginPath(); x.arc(c + H.x * S, c + H.y * S, (hole + 0.6) * S, 0, TAU); x.fill(); }
+      for (const sd of [-1, 1]) { x.fillStyle = '#e8b84a'; x.beginPath(); x.arc(c + pocket[0] * S, c + sd * pocket[1] * S, (pocket[2] + 1.6) * S, 0, TAU); x.fill(); }
+      x.fillStyle = '#0a0610'; for (const H of holes) { x.beginPath(); x.arc(c + H.x * S, c + H.y * S, ((H.r || hole) + 0.6) * S, 0, TAU); x.fill(); }
+      x.fillRect(0, 0, 4 * S, 1024); x.fillStyle = '#e8b84a'; x.fillRect(4 * S, 0, 0.5 * S, 1024);   // (the gutter along the bottom, edged in gold)
       x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = "700 64px Georgia, serif";
       const label = (t, px, py, col) => { x.save(); x.translate(c + px * S, c + py * S); x.rotate(Math.PI / 2); x.fillStyle = col; x.fillText(t, 0, 0); x.restore(); };
       for (let k = 1; k < rings.length; k++) label(String(pts[k]), (rings[k - 1] + rings[k]) / 2, 0, k % 2 ? '#c8343e' : '#fffaf0');
-      for (const sd of [-1, 1]) label('100', pocket[0] - pocket[2] - 3.4, sd * pocket[1], '#ffd84a');
+      for (const sd of [-1, 1]) label('100', pocket[0] - pocket[2] - 5, sd * pocket[1], '#ffd84a');
     }, true) });
   }
   // a wooden coaster's white timbers, its lift chain, and the Ferris wheel's gate bar

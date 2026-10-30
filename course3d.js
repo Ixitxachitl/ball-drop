@@ -450,28 +450,42 @@ export function createCourse(g) {
     p.regions.push({ a: 0, b: L1 + 4, belt: 42, chain: true });
     return p;
   }
-  // A skee-ball board, sloping up away from the lane (tilt): rings of raised lips round a middle cup, and a
-  // 100 pocket, lipped too, in each top corner. On it a ball rolls and bounces about under gravity (see
-  // stepSkee): it bounces off a lip, or hops over one it hits fast enough or comes down on, and down inside a
-  // ring it rolls round to the hole at the bottom of that ring (in the cup and the pockets, the hole's in the
-  // middle) and drops through it into the catcher under the board. Off the rings it rolls down into the gutter
-  // along the bottom. What it drops through scores, and that's its boost. (In the board: x up it, y across.)
-  // A ball's rolled up the lane anywhere between v[0] and v[1] fast.
-  const SKEE = { rings: [3.6, 10, 16.5, 23, 29.5], pts: [50, 40, 30, 20, 10], half: 34, pocket: [27.5, 27.5, 4.2], lipH: 1.8, hole: 2, tilt: 0.3,
-    v: [50, 128], aim: 92, launch: 0.95, boost: { 0: 0, 10: 110, 20: 130, 30: 150, 40: 175, 50: 200, 100: 230 } };
-  SKEE.lips = [...SKEE.rings.map(R => ({ x: 0, y: 0, R })), ...[-1, 1].map(sd => ({ x: SKEE.pocket[0], y: sd * SKEE.pocket[1], R: SKEE.pocket[2] }))];
-  SKEE.holes = [{ x: 0, y: 0, pts: 50 }, ...SKEE.rings.slice(1).map((R, k) => ({ x: -(SKEE.rings[k] + R) / 2, y: 0, pts: SKEE.pts[k + 1] })), ...[-1, 1].map(sd => ({ x: SKEE.pocket[0], y: sd * SKEE.pocket[1], pts: 100 }))];
+  // A skee-ball board, sloping up away from the lane (tilt), its bottom edge just past the end of the hump:
+  // rings of raised lips round a middle cup, and a 100 hole in each top corner. On it a ball rolls and
+  // bounces about under gravity (see stepSkee): it bounces off a lip, or hops over one it hits fast enough or
+  // comes down on, and down inside a ring it rolls round to the hole at the bottom of that ring (in the cup
+  // the hole's in the middle) and drops through it into the catcher under the board. Off the rings it rolls
+  // down into the gutter along the bottom. What it drops through scores, and that's its boost. (In the
+  // board: x up it, y across.) There's room past every lip, between the rings and the walls, and the 100
+  // holes have no lips, so nowhere on it can a ball be wedged.
+  const SKEE = { rings: [4, 11, 18, 25, 32], pts: [50, 40, 30, 20, 10], half: 39, pocket: [34, 34, 3], lipH: 1.8, hole: 2.2, tilt: 0.2, launch: 0.95, gap: 1.5, drop: 3,
+    boost: { 0: 0, 10: 110, 20: 130, 30: 150, 40: 175, 50: 200, 100: 230 } };
+  SKEE.lips = SKEE.rings.map(R => ({ x: 0, y: 0, R }));
+  SKEE.holes = [{ x: 0, y: 0, pts: 50 }, ...SKEE.rings.slice(1).map((R, k) => ({ x: -(SKEE.rings[k] + R) / 2, y: 0, pts: SKEE.pts[k + 1] })), ...[-1, 1].map(sd => ({ x: SKEE.pocket[0], y: sd * SKEE.pocket[1], pts: 100, r: SKEE.pocket[2] }))];
+  // The board past the end of the hump (the turtle), and how hard the boost pad before the hump sends each
+  // ball at it: anywhere from hard enough to just reach the board to hard enough to reach the top.
   function skeeBoard(lip) {
-    const yaw = tur.yaw, F = [Math.cos(yaw), 0, Math.sin(yaw)], A = [-F[2], 0, F[0]], b = SKEE.tilt, vm = SKEE.aim;
-    // (where a ball thrown at the speed it's aimed for comes back down to just above the lip)
-    let x = 0, y = 0, vh = vm * Math.cos(tur.pitch), vy = vm * Math.sin(tur.pitch);
-    for (let k = 0; k < 2000 && !(vy < 0 && y < 2); k++) { vy -= G / 240; x += vh / 240; y += vy / 240; }
-    const C = [tur.x + F[0] * x, tur.y + y, tur.z + F[2] * x];
+    const yaw = tur.yaw, F = [Math.cos(yaw), 0, Math.sin(yaw)], A = [-F[2], 0, F[0]], b = SKEE.tilt, H = SKEE.half;
+    const C = [tur.x + F[0] * (SKEE.gap + H * Math.cos(b)), tur.y - SKEE.drop + H * Math.sin(b), tur.z + F[2] * (SKEE.gap + H * Math.cos(b))];
     const Sk = { C, F, A, e1: [F[0] * Math.cos(b), Math.sin(b), F[2] * Math.cos(b)], n: [-F[0] * Math.sin(b), Math.cos(b), -F[2] * Math.sin(b)], lip, cfg: SKEE };
+    // (where a ball leaving the hump at v comes down on the board, up it)
+    const p = tur.pitch, x0 = -Math.sin(p) * RW, y0 = Math.cos(p) * RW;
+    const landX = v => {
+      let x = x0, y = y0, vh = v * Math.cos(p), vy = v * Math.sin(p);
+      for (let k = 0; k < 4000; k++) {
+        vy -= G / 240; x += vh / 240; y += vy / 240;
+        const dx = x - (SKEE.gap + H * Math.cos(b)), dy = y - (-SKEE.drop + H * Math.sin(b));
+        if (vy < 0 && -dx * Math.sin(b) + dy * Math.cos(b) < RW) return dx * Math.cos(b) + dy * Math.sin(b);
+      }
+      return Infinity;
+    };
+    const speedFor = X => { let lo = 10, hi = 400; for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (landX(m) < X) lo = m; else hi = m; } return lo; };
+    const rise = lip.P[(lip.n - 1) * 3 + 1] - lip.P[1], kick = v => Math.min(VMAX, Math.sqrt(v * v + 2 * G * ROLL * rise) * 1.04);
+    Sk.kick = [kick(speedFor(-H + 6)), kick(speedFor(H - 4))];
     lip.skee = Sk;
     lip.extra = [];
-    for (const a of [-1, 0, 1]) for (const c of [-1, 0, 1]) lip.extra.push([C[0] + (Sk.e1[0] * a + A[0] * c) * 36, C[1] + Sk.e1[1] * a * 36, C[2] + (Sk.e1[2] * a + A[2] * c) * 36]);
-    tur = { x: C[0], y: C[1] - SKEE.half * Math.sin(b) - 40, z: C[2], yaw, pitch: 0 };
+    for (const a of [-1, 0, 1]) for (const c of [-1, 0, 1]) lip.extra.push([C[0] + (Sk.e1[0] * a + A[0] * c) * (H + 3), C[1] + Sk.e1[1] * a * (H + 3), C[2] + (Sk.e1[2] * a + A[2] * c) * (H + 3)]);
+    tur = { x: C[0], y: C[1] - H * Math.sin(b) - 40, z: C[2], yaw, pitch: 0 };
     return Sk;
   }
   // Flying at the board: once it's down on it, it's on it (off the top or the sides, it's met by the backstop
@@ -519,16 +533,16 @@ export function createCourse(g) {
     if (w.bx > h) { w.bx = h; w.bvx = -Math.abs(w.bvx) * 0.3; }
     // through a hole, or into the gutter (or, if it's somehow been on the board too long, into the gutter)
     let drop = null;
-    if (w.bh < 0.3) for (const H of SKEE.holes) if (Math.hypot(w.bx - H.x, w.by - H.y) < SKEE.hole) { drop = H; break; }
+    if (w.bh < 0.3) for (const H of SKEE.holes) if (Math.hypot(w.bx - H.x, w.by - H.y) < (H.r || SKEE.hole)) { drop = H; break; }
     if (!drop && (w.bx < -h || t - w.skT > 14)) { drop = { pts: 0 }; if (t - w.skT > 14) note('skee'); w.bx = -h; w.by = clamp(w.by, -10, 10); }
     placeSkee(w);
     if (!drop) return;
     const pts = drop.pts;
     popup(w.X, -w.Y - 8, pts ? String(pts) : 'GUTTER', pts >= 50 ? '#3fdc7a' : pts ? '#ffd84a' : '#e8e6f4', w.Z);
     if (pts >= 50) emit(w.X, -w.Y, pts === 100 ? 30 : 16, ['#3fdc7a', '#ffd84a', '#fff'], 60, 80, 200, [0.5, 1.1], w.Z);
-    // (out through the back of the board, and down a chute into the middle of the catcher)
-    w.by = clamp(w.by, -12, 12); placeSkee(w);
-    w.X -= S.n[0] * (RW + 2); w.Y -= S.n[1] * (RW + 2); w.Z -= S.n[2] * (RW + 2);
+    // (down into the cabinet under the board, out of sight, and down a chute from there into the middle of
+    // the catcher)
+    w.bh = -(RW + 10); w.by = clamp(w.by, -12, 12); placeSkee(w);
     Object.assign(w, { m3: 'air', vx: 0, vy: -20, vz: 0, rBoost: SKEE.boost[pts], sk: null, land: S.lip.landOn });
     flat(w);
   }
@@ -736,15 +750,13 @@ export function createCourse(g) {
       lead.gapTo = out.length;
       dress(add(straight(rnd(50, 70), -0.14, { kind: 'land' })));
     } else if (kind === 'skeeball') {
-      // a skee-ball alley: up a lane narrowing to a hump, which throws each ball up onto the board (see stepSkee),
-      // and a catcher under the board
+      // a skee-ball alley: up a lane to a boost pad, which sends each ball into the hump as hard as it likes,
+      // and the hump throws it up onto the board (see stepSkee); and a catcher under the board
       add(straight(30, -0.04));
-      const lane = add(straight(rnd(60, 75), 0.08, { kind: 'skeeball', style: 'skee' }));
-      for (const sd of [-1, 1]) lane.segs.push({ as: lane.len - 45, au: sd * RAIL, bs: lane.len - 8, bu: sd * 7.5, e: 0.3, wall: true }, { as: lane.len - 8, au: sd * 7.5, bs: lane.len, bu: sd * 7.5, e: 0.3, wall: true });
-      const lip = add(straight(12, SKEE.launch, { kind: 'lip', style: 'skee', ub: 7.5 - RW }));
-      for (const sd of [-1, 1]) lip.segs.push({ as: 0, au: sd * 7.5, bs: lip.len, bu: sd * 7.5, e: 0.3, wall: true });
+      const lane = add(straight(rnd(60, 75), 0.06, { kind: 'skeeball', style: 'skee' }));
+      const lip = add(straight(14, SKEE.launch, { kind: 'lip', style: 'skee' }));
       lip.end = 'air';
-      skeeBoard(lip);
+      lane.regions.push({ a: lane.len - 22, b: lane.len - 4, kick: skeeBoard(lip).kick });
       lip.gapTo = out.length;
       dress(add(catcher(130)));
     } else if (kind === 'coaster') {
@@ -1072,6 +1084,7 @@ export function createCourse(g) {
       if (r.belt) { w.vs = r.belt; w.vu *= 1 - 4 * dt; }
       else if (r.rough) { w.vs -= w.vs * (r.rough === 'gravel' ? 1.2 : 0.5) * dt; w.vu += rnd(-1, 1) * (r.rough === 'rumble' ? 50 : 90) * dt; }   // (bumpy: slowed and jostled)
       else if (r.roll) { const k = Math.min(1, 7 * dt); if (r.roll.vu) w.vu += (r.roll.vu - w.vu) * k; if (r.roll.vs && w.vs < r.roll.vs) w.vs += (r.roll.vs - w.vs) * k; }
+      else if (r.kick) { if (w.kicked !== r) { w.kicked = r; w.vs = rnd(...r.kick); w.vu *= 0.5; emit(w.X, -w.Y, 10, ['#3ff8ff', '#1a5cff', '#fff'], 40, 40, 120, undefined, w.Z); w.boostT = 0.8; } }   // (a skee-ball boost pad: as hard as it likes)
       else if (r.boost && w.vs < r.boost) { w.vs = r.boost; if (!w.boostT) emit(w.X, -w.Y, 8, ['#3ff8ff', '#1a5cff', '#fff'], 40, 30, 100, undefined, w.Z); w.boostT = 0.8; }
     }
     for (const P of p.pads || []) {   // (on a turntable, or one of a merry-go-round's rings: carried round with it)
@@ -1106,7 +1119,7 @@ export function createCourse(g) {
     if (w.s >= p.len) {
       if (p.kind === 'goal' || w.pi === pieces.length - 1) { w.s = p.len - 0.01; w.vs = 0; }
       else if (p.end === 'air') {
-        if (p.skee) { w.vs = rnd(...SKEE.v); w.vu = rnd(-28, 28); w.sk = p.skee; }   // (rolled up a skee-ball lane: as hard as it likes)
+        if (p.skee) w.sk = p.skee;   // (off a skee-ball hump: at the board)
         at(p, p.len, F1); toAir(w, F1); return;
       }
       else if (p.end === 'funnel') { place3(w); p.fun.wheel ? toWheel(w, p.fun) : toFunnel(w, p.fun); return; }
@@ -1645,7 +1658,7 @@ export function createCourse(g) {
   // Balls bump into each other in the world; on the track, what that does to them is along and across it.
   function pairs(ws) {
     // (balls right at a funnel's spout don't block each other: they just go through)
-    const bumps = w => w.m3 === 'track' || w.m3 === 'air' || (w.m3 === 'funnel' && w.frad > w.F.rs + 3) || (w.m3 === 'wheel' && w.wy > w.F.y0 - 0.05);
+    const bumps = w => w.m3 === 'track' || w.m3 === 'air' || w.m3 === 'skee' || (w.m3 === 'funnel' && w.frad > w.F.rs + 3) || (w.m3 === 'wheel' && w.wy > w.F.y0 - 0.05);
     const round = w => w.m3 === 'funnel' || w.m3 === 'wheel';
     // (in a funnel, in or out is along the radius and round is across it)
     const radial = w => { const c = Math.cos(w.fth), sn = Math.sin(w.fth); return [c, sn, -sn, c]; };
@@ -1657,6 +1670,7 @@ export function createCourse(g) {
         for (let j = 0; j < 3; j++) o[j] = w.vs * F.T[j] + cx * F.B[j] + cy * F.N[j];
       } else if (w.m3 === 'track') { o[0] = w.vs * w.fr.T[0] + w.vu * w.fr.B[0]; o[1] = w.vs * w.fr.T[1] + w.vu * w.fr.B[1]; o[2] = w.vs * w.fr.T[2] + w.vu * w.fr.B[2]; }
       else if (round(w)) { const [cr, sr, ct, st] = radial(w), vt = w.fL / w.frad; o[0] = w.fvr * cr + vt * ct; o[1] = 0; o[2] = w.fvr * sr + vt * st; }
+      else if (w.m3 === 'skee') { const S = w.sk; for (let j = 0; j < 3; j++) o[j] = S.e1[j] * w.bvx + S.A[j] * w.bvy + S.n[j] * w.bvh; }
       else { o[0] = w.vx; o[1] = w.vy; o[2] = w.vz; }
       return o;
     };
@@ -1666,6 +1680,9 @@ export function createCourse(g) {
         const F = w.fr, R = drumR(pieces[w.pi].drum), ds = x * F.T[0] + y * F.T[1] + z * F.T[2], db = x * F.B[0] + y * F.B[1] + z * F.B[2], dn = x * F.N[0] + y * F.N[1] + z * F.N[2];
         if (isVel) { w.vs += ds; if (d.air) { d.vx += db; d.vy += dn; } else d.phd += (db * Math.cos(d.phi) + dn * Math.sin(d.phi)) / R; }
         else { w.s += ds; if (d.air) { d.x += db; d.y += dn; } else d.phi += (db * Math.cos(d.phi) + dn * Math.sin(d.phi)) / R; }
+      } else if (w.m3 === 'skee') {   // (on a skee-ball board: up it, across it and off it)
+        const S = w.sk, a = x * S.e1[0] + y * S.e1[1] + z * S.e1[2], b = x * S.A[0] + z * S.A[2], n = x * S.n[0] + y * S.n[1] + z * S.n[2];
+        if (isVel) { w.bvx += a; w.bvy += b; w.bvh += n; } else { w.bx += a; w.by += b; w.bh = Math.max(0, w.bh + n); }
       } else if (round(w)) {
         const [cr, sr, ct, st] = radial(w), dr = x * cr + z * sr, dt2 = x * ct + z * st;
         if (isVel) { w.fvr += dr; w.fL += w.frad * dt2; } else { w.frad = clamp(w.frad + dr, w.F.rs + 0.5, w.F.R - RW - 0.6); w.fth += dt2 / w.frad; }
@@ -1719,6 +1736,7 @@ export function createCourse(g) {
     }
     pairs(ws);
     for (const w of ws) if (w.m3 === 'wheel') { frets(w, w.F); w.X = w.F.cx + Math.cos(w.fth) * w.frad; w.Z = w.F.cz + Math.sin(w.fth) * w.frad; w.Y = w.wy + RW; flat(w); }   // (not pushed into one by another ball)
+    for (const w of ws) if (w.m3 === 'skee') placeSkee(w);   // (where it's been bumped to)
     for (const w of ws) if (w.m3 === 'track') { place3(w); w.dist = pieces[w.pi].s0 + w.s; }
     if (racing) for (const w of ws) watch(w, dt);
   }
